@@ -784,10 +784,11 @@ public class WadLoader implements IWadLoader {
 						}
 					} else {
 						// replace lump with parsed object.
-						lumpcache[lump] = (CacheableDoomObject) thebuffer;
+						DoomBuffer db = new DoomBuffer(thebuffer);
+						lumpcache[lump] = db;
 						
 						// Track it for freeing
-						Track((CacheableDoomObject)thebuffer,lump);
+						Track(db,lump);
 					}
 				} catch (Exception e) {
 					System.err.println("Could not auto-instantiate lump "
@@ -1152,7 +1153,7 @@ public class WadLoader implements IWadLoader {
 		// in any chain, observing pwad ordering rules. killough
 
         for (int i = 0; i < numlumps; i++) { // hash function:
-            doomhash.put(lumpinfo[i].name.toUpperCase(), new Integer(i));
+            doomhash.put(lumpinfo[i].name.toUpperCase(), Integer.valueOf(i));
         }
     }
 
