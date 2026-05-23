@@ -79,7 +79,8 @@ public enum CommandVariable {
     BLOCKMAP,
     SHOWFPS,
     JAVARANDOM,
-    GREYPAL;
+    GREYPAL,
+    STDOUT;
     
     public final char prefix;
     public final Class<?>[] arguments;

@@ -22,12 +22,14 @@ import awt.DoomWindowController;
 import awt.EventBase.KeyStateInterest;
 import static awt.EventBase.KeyStateSatisfaction.*;
 import awt.EventHandler;
+import awt.HeadlessController;
 import doom.CVarManager;
 import doom.CommandVariable;
 import doom.ConfigManager;
 import doom.DoomMain;
 import static g.Signals.ScanCode.*;
 import i.Strings;
+import i.StdoutFrameWriter;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.logging.Level;
@@ -40,6 +42,15 @@ public class Engine {
      * Mocha Doom engine entry point
      */
     public static void main(final String[] argv) throws IOException {
+        // Must be set BEFORE any AWT class is loaded — do it as the very
+        // first thing based on a raw argv scan (CVarManager isn't built yet).
+        for (final String arg : argv) {
+            if ("-stdout".equalsIgnoreCase(arg)) {
+                System.setProperty("java.awt.headless", "true");
+                break;
+            }
+        }
+
         final Engine local;
         synchronized (Engine.class) {
             local = new Engine(argv);
@@ -65,75 +76,95 @@ public class Engine {
     
     public final CVarManager cvm;
     public final ConfigManager cm;
+
+    /** Non-null only in normal (AWT window) mode. */
     public final DoomWindowController<?, EventHandler> windowController;
+
+    /** Non-null only in headless (-stdout) mode. */
+    private final HeadlessController headlessController;
+
+    /** Non-null only in headless (-stdout) mode; writes RGBA frames to stdout. */
+    private final StdoutFrameWriter stdoutWriter;
+
     private final DoomMain<?, ?> DOOM;
     
     @SuppressWarnings("unchecked")
     private Engine(final String... argv) throws IOException {
         instance = this;
-        
+
         // reads command line arguments
         this.cvm = new CVarManager(Arrays.asList(argv));
-        
+
         // reads default.cfg and mochadoom.cfg
         this.cm = new ConfigManager();
-        
-        // intiializes stuff
+
+        // initializes stuff
         this.DOOM = new DoomMain<>();
-        
-        // opens a window
-        this.windowController = /*cvm.bool(CommandVariable.AWTFRAME)
-            ? */DoomWindow.createCanvasWindowController(
+
+        final boolean headless = cvm.bool(CommandVariable.STDOUT);
+
+        if (headless) {
+            // ---- HEADLESS MODE: no AWT window, output goes to stdout ----
+            this.headlessController = new HeadlessController();
+            this.windowController   = null;
+            this.stdoutWriter       = new StdoutFrameWriter();
+            // No key-interest listeners needed; input comes from demo playback.
+        } else {
+            // ---- NORMAL MODE: AWT canvas window ----
+            this.headlessController = null;
+            this.stdoutWriter       = null;
+            this.windowController   = DoomWindow.createCanvasWindowController(
                 DOOM.graphicSystem::getScreenImage,
                 DOOM::PostEvent,
                 DOOM.graphicSystem.getScreenWidth(),
                 DOOM.graphicSystem.getScreenHeight()
-            )/* : DoomWindow.createJPanelWindowController(
-                DOOM.graphicSystem::getScreenImage,
-                DOOM::PostEvent,
-                DOOM.graphicSystem.getScreenWidth(),
-                DOOM.graphicSystem.getScreenHeight()
-            )*/;
-        
-        windowController.getObserver().addInterest(
-            new KeyStateInterest<>(obs -> {
-                EventHandler.fullscreenChanges(windowController.getObserver(), windowController.switchFullscreen());
-                return WANTS_MORE_ATE;
-            }, SC_LALT, SC_ENTER)
-        ).addInterest(
-            new KeyStateInterest<>(obs -> {
-                if (!windowController.isFullscreen()) {
-                    if (DOOM.menuactive || DOOM.paused || DOOM.demoplayback) {
-                        EventHandler.menuCaptureChanges(obs, DOOM.mousecaptured = !DOOM.mousecaptured);
-                    } else { // can also work when not DOOM.mousecaptured
+            );
+
+            windowController.getObserver().addInterest(
+                new KeyStateInterest<>(obs -> {
+                    EventHandler.fullscreenChanges(windowController.getObserver(), windowController.switchFullscreen());
+                    return WANTS_MORE_ATE;
+                }, SC_LALT, SC_ENTER)
+            ).addInterest(
+                new KeyStateInterest<>(obs -> {
+                    if (!windowController.isFullscreen()) {
+                        if (DOOM.menuactive || DOOM.paused || DOOM.demoplayback) {
+                            EventHandler.menuCaptureChanges(obs, DOOM.mousecaptured = !DOOM.mousecaptured);
+                        } else {
+                            EventHandler.menuCaptureChanges(obs, DOOM.mousecaptured = true);
+                        }
+                    }
+                    return WANTS_MORE_PASS;
+                }, SC_LALT)
+            ).addInterest(
+                new KeyStateInterest<>(obs -> {
+                    if (!windowController.isFullscreen() && !DOOM.mousecaptured && DOOM.menuactive) {
                         EventHandler.menuCaptureChanges(obs, DOOM.mousecaptured = true);
                     }
-                }
-                return WANTS_MORE_PASS;
-            }, SC_LALT)
-        ).addInterest(
-            new KeyStateInterest<>(obs -> {
-                if (!windowController.isFullscreen() && !DOOM.mousecaptured && DOOM.menuactive) {
-                    EventHandler.menuCaptureChanges(obs, DOOM.mousecaptured = true);
-                }
-                
-                return WANTS_MORE_PASS;
-            }, SC_ESCAPE)
-        ).addInterest(
-            new KeyStateInterest<>(obs -> {
-                if (!windowController.isFullscreen() && !DOOM.mousecaptured && DOOM.paused) {
-                    EventHandler.menuCaptureChanges(obs, DOOM.mousecaptured = true);
-                }
-                return WANTS_MORE_PASS;
-            }, SC_PAUSE)
-        );
+                    return WANTS_MORE_PASS;
+                }, SC_ESCAPE)
+            ).addInterest(
+                new KeyStateInterest<>(obs -> {
+                    if (!windowController.isFullscreen() && !DOOM.mousecaptured && DOOM.paused) {
+                        EventHandler.menuCaptureChanges(obs, DOOM.mousecaptured = true);
+                    }
+                    return WANTS_MORE_PASS;
+                }, SC_PAUSE)
+            );
+        }
     }
     
     /**
      * Temporary solution. Will be later moved in more detalied place
      */
     public static void updateFrame() {
-        instance.windowController.updateFrame();
+        if (instance.stdoutWriter != null) {
+            // Headless mode: write RGBA frame packet to stdout
+            instance.stdoutWriter.writeFrame(instance.DOOM.graphicSystem);
+        } else {
+            // Normal mode: repaint the AWT window
+            instance.windowController.updateFrame();
+        }
     }
         
     public String getWindowTitle(double frames) {
