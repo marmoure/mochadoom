@@ -3744,6 +3744,12 @@ public class DoomMain<T, V> extends DoomStatus<T, V> implements IDoomGameNetwork
         // wait for new tics if needed
         while (lowtic < gametic / ticdup + counts) {
             NetUpdate();
+            // SETTING FRAMES to 1 frame per second
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                // Ignore
+            }
             lowtic = MAXINT;
 
             // Finds the node with the lowest number of tics.

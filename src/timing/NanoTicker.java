@@ -22,7 +22,9 @@ public class NanoTicker
         if (basetime == 0) {
             basetime = tp;
         }
-        newtics = (int) (((tp - basetime) * TICRATE) / 1000000000);// + tp.tv_usec*TICRATE/1000000;
+        // newtics = (int) (((tp - basetime) * TICRATE) / 1000000000);// + tp.tv_usec*TICRATE/1000000;
+        // SET FRAMES to 1 frame per second
+        newtics = (int) ((tp - basetime) / 1000000000);// + tp.tv_usec*TICRATE/1000000;
         if (newtics < oldtics) {
             System.err.printf("Timer discrepancies detected : %d", (++discrepancies));
             return oldtics;

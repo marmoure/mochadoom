@@ -20,7 +20,9 @@ public class MilliTicker
         if (basetime == 0) {
             basetime = tp;
         }
-        newtics = (int) (((tp - basetime) * TICRATE) / 1000);
+        // newtics = (int) (((tp - basetime) * TICRATE) / 1000);
+        // SET FRAMES to 1 frame per second
+        newtics = (int) ((tp - basetime) / 1000);
         return newtics;
     }
     
