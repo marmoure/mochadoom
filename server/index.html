@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DOOM Live Stream</title>
+  <meta name="description" content="Real-time DOOM gameplay streamed from a Java engine to your browser via WebSocket." />
+  <style>
+    /* ── Reset & tokens ──────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --red:      #e63946;
+      --red-dark: #9d0208;
+      --orange:   #f48c06;
+      --bg:       #080808;
+      --surface:  #111111;
+      --surface2: #1a1a1a;
+      --border:   #2a2a2a;
+      --text:     #e8e8e8;
+      --text-dim: #888;
+      --green:    #2dc653;
+      --glow-red: 0 0 24px rgba(230,57,70,.6), 0 0 60px rgba(230,57,70,.25);
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Share Tech Mono', 'Courier New', monospace;
+      overflow: hidden;
+    }
+
+    /* ── Google Font ─────────────────────────────────────────────────── */
+    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+
+    /* ── Layout ──────────────────────────────────────────────────────── */
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100vh;
+      padding: 0;
+    }
+
+    /* ── Header ──────────────────────────────────────────────────────── */
+    header {
+      width: 100%;
+      padding: 14px 28px;
+      background: linear-gradient(90deg, #0d0d0d 0%, #1a0505 50%, #0d0d0d 100%);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      position: relative;
+      z-index: 10;
+      flex-shrink: 0;
+    }
+
+    .logo {
+      font-size: 1.6rem;
+      font-weight: 900;
+      letter-spacing: .15em;
+      color: var(--red);
+      text-shadow: var(--glow-red);
+      text-transform: uppercase;
+      user-select: none;
+    }
+
+    .logo span { color: var(--orange); }
+
+    .header-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    /* ── Status pill ─────────────────────────────────────────────────── */
+    #status-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 14px;
+      border-radius: 99px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      font-size: .78rem;
+      letter-spacing: .06em;
+      transition: background .3s;
+    }
+    #status-dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      transition: background .3s, box-shadow .3s;
+    }
+    #status-pill.connected    { border-color: #1a3d1a; background: #0d1f0d; }
+    #status-pill.connected    #status-dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    #status-pill.disconnected { border-color: #3d1a1a; background: #1f0d0d; }
+    #status-pill.disconnected #status-dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
+
+    /* ── Stats bar ───────────────────────────────────────────────────── */
+    .stats {
+      display: flex;
+      gap: 24px;
+      font-size: .75rem;
+      color: var(--text-dim);
+    }
+    .stat-item strong {
+      color: var(--text);
+      font-weight: normal;
+    }
+
+    /* ── Main stage ──────────────────────────────────────────────────── */
+    main {
+      flex: 1;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+      background:
+        radial-gradient(ellipse at 50% 0%, rgba(230,57,70,.06) 0%, transparent 60%),
+        var(--bg);
+    }
+
+    /* Scanline overlay */
+    main::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent 0px,
+        transparent 2px,
+        rgba(0,0,0,.18) 2px,
+        rgba(0,0,0,.18) 4px
+      );
+      pointer-events: none;
+      z-index: 3;
+    }
+
+    /* ── Canvas wrapper ───────────────────────────────────────────────── */
+    .canvas-wrap {
+      position: relative;
+      line-height: 0;
+      border: 1px solid var(--border);
+      box-shadow:
+        0 0 0 1px rgba(230,57,70,.12),
+        0 0 40px rgba(0,0,0,.8),
+        inset 0 0 0 1px rgba(255,255,255,.03);
+      z-index: 2;
+    }
+
+    .canvas-wrap::before {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      border: 2px solid transparent;
+      border-radius: 2px;
+      background: linear-gradient(135deg, rgba(230,57,70,.3), transparent 40%) border-box;
+      -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: destination-out;
+      mask-composite: exclude;
+      pointer-events: none;
+    }
+
+    #screen {
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    /* ── Waiting overlay ─────────────────────────────────────────────── */
+    #waiting {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      background: rgba(8,8,8,.92);
+      z-index: 5;
+      transition: opacity .4s;
+    }
+    #waiting.hidden { opacity: 0; pointer-events: none; }
+
+    .doom-skull {
+      font-size: 3.5rem;
+      filter: drop-shadow(0 0 16px var(--red));
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1);   opacity: 1; }
+      50%       { transform: scale(.92); opacity: .7; }
+    }
+
+    #waiting p {
+      font-size: .9rem;
+      color: var(--text-dim);
+      letter-spacing: .1em;
+    }
+    #waiting .blink {
+      animation: blink 1.1s step-end infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* ── Footer ──────────────────────────────────────────────────────── */
+    footer {
+      width: 100%;
+      padding: 8px 28px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: .7rem;
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    /* ── FPS meter ───────────────────────────────────────────────────── */
+    #fps-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #fps-value {
+      font-size: .85rem;
+      color: var(--green);
+      min-width: 3ch;
+    }
+
+    /* ── Reconnect button ─────────────────────────────────────────────── */
+    #reconnect-btn {
+      display: none;
+      padding: 6px 18px;
+      background: var(--red-dark);
+      border: 1px solid var(--red);
+      color: var(--text);
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: .8rem;
+      letter-spacing: .08em;
+      transition: background .2s;
+    }
+    #reconnect-btn:hover { background: var(--red); }
+
+    /* ── Responsive ──────────────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .stats { display: none; }
+      .logo  { font-size: 1.1rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────────────── -->
+<header>
+  <div class="logo">💀 <span>DOOM</span> LIVE</div>
+
+  <div class="header-right">
+    <div class="stats">
+      <div class="stat-item">FRAME <strong id="stat-frame">—</strong></div>
+      <div class="stat-item">RES <strong id="stat-res">—</strong></div>
+      <div class="stat-item">SIZE <strong id="stat-size">—</strong></div>
+    </div>
+
+    <div id="status-pill">
+      <div id="status-dot"></div>
+      <span id="status-text">CONNECTING</span>
+    </div>
+  </div>
+</header>
+
+<!-- ── Main stage ─────────────────────────────────────────────────────── -->
+<main>
+  <div class="canvas-wrap" id="canvas-wrap">
+    <canvas id="screen" width="320" height="200"></canvas>
+
+    <div id="waiting">
+      <div class="doom-skull">💀</div>
+      <p>WAITING FOR DOOM STREAM<span class="blink">_</span></p>
+      <button id="reconnect-btn">RECONNECT</button>
+    </div>
+  </div>
+</main>
+
+<!-- ── Footer ─────────────────────────────────────────────────────────── -->
+<footer>
+  <span>MochaDoom — Java port · streaming via WebSocket</span>
+  <div id="fps-bar">
+    FPS: <span id="fps-value">—</span>
+  </div>
+</footer>
+
+<script>
+'use strict';
+
+// ── DOM refs ────────────────────────────────────────────────────────────
+const canvas       = document.getElementById('screen');
+const ctx          = canvas.getContext('2d');
+const waiting      = document.getElementById('waiting');
+const statusPill   = document.getElementById('status-pill');
+const statusText   = document.getElementById('status-text');
+const statusDot    = document.getElementById('status-dot');
+const statFrame    = document.getElementById('stat-frame');
+const statRes      = document.getElementById('stat-res');
+const statSize     = document.getElementById('stat-size');
+const fpsValue     = document.getElementById('fps-value');
+const reconnectBtn = document.getElementById('reconnect-btn');
+
+// ── State ───────────────────────────────────────────────────────────────
+let frameCount = 0;
+let lastFpsTime = performance.now();
+let lastFrameTime = performance.now();
+
+// ── FPS counter ─────────────────────────────────────────────────────────
+function updateFps() {
+  const now = performance.now();
+  const elapsed = (now - lastFpsTime) / 1000;
+  if (elapsed >= 1) {
+    const fps = Math.round(frameCount / elapsed);
+    fpsValue.textContent = fps;
+    frameCount = 0;
+    lastFpsTime = now;
+  }
+}
+
+// ── Render a JPEG blob onto the canvas ──────────────────────────────────
+async function renderJpeg(blob) {
+  const bitmap = await createImageBitmap(blob);
+  const { width: w, height: h } = bitmap;
+
+  // Resize canvas if dimensions changed
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width  = w;
+    canvas.height = h;
+
+    // Scale the wrap so the canvas fits nicely inside the viewport
+    scaleCanvas(w, h);
+  }
+
+  ctx.drawImage(bitmap, 0, 0);
+
+  // Stats
+  frameCount++;
+  statFrame.textContent = (parseInt(statFrame.textContent) || 0) + 1;
+  statRes.textContent   = `${w}×${h}`;
+  statSize.textContent  = formatBytes(blob.size);
+  updateFps();
+  lastFrameTime = performance.now();
+}
+
+function scaleCanvas(w, h) {
+  const main   = document.querySelector('main');
+  const maxW   = main.clientWidth  - 32;
+  const maxH   = main.clientHeight - 16;
+  const scale  = Math.min(maxW / w, maxH / h, 4);  // max 4× zoom
+  const finalW = Math.floor(w * scale);
+  const finalH = Math.floor(h * scale);
+  canvas.style.width  = finalW + 'px';
+  canvas.style.height = finalH + 'px';
+}
+
+window.addEventListener('resize', () => scaleCanvas(canvas.width, canvas.height));
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return bytes + 'B';
+  return (bytes / 1024).toFixed(1) + 'KB';
+}
+
+// ── WebSocket connection ─────────────────────────────────────────────────
+let ws = null;
+let reconnectTimer = null;
+let firstFrame = true;
+
+function setStatus(state, label) {
+  statusPill.className = state;
+  statusText.textContent = label;
+}
+
+function connect() {
+  if (ws) { ws.onclose = null; ws.close(); }
+  clearTimeout(reconnectTimer);
+
+  const url = `ws://${location.host}`;
+  ws = new WebSocket(url);
+  ws.binaryType = 'blob';
+
+  setStatus('', 'CONNECTING…');
+  reconnectBtn.style.display = 'none';
+
+  ws.addEventListener('open', () => {
+    setStatus('connected', 'LIVE');
+    console.log('[ws] connected');
+  });
+
+  ws.addEventListener('message', async (evt) => {
+    if (firstFrame) {
+      firstFrame = false;
+      waiting.classList.add('hidden');
+    }
+    await renderJpeg(evt.data);
+  });
+
+  ws.addEventListener('close', () => {
+    setStatus('disconnected', 'DISCONNECTED');
+    reconnectBtn.style.display = 'inline-block';
+    console.warn('[ws] disconnected — retrying in 3s');
+    reconnectTimer = setTimeout(connect, 3000);
+  });
+
+  ws.addEventListener('error', (e) => {
+    console.error('[ws] error', e);
+  });
+}
+
+reconnectBtn.addEventListener('click', connect);
+
+// ── Start ────────────────────────────────────────────────────────────────
+connect();
+</script>
+</body>
+</html>

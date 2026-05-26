@@ -9,6 +9,8 @@ dist/
 build.xml
 nbproject/
 
+node_modules/
+
 # Intellij 
 *.iml
 .idea/

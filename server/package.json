@@ -1,0 +1,14 @@
+{
+  "name": "doom-stream-server",
+  "version": "1.0.0",
+  "description": "Streams MochaDoom frames to a browser via WebSocket",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev":   "node server.js --spawn"
+  },
+  "dependencies": {
+    "ws":   "^8.18.0",
+    "jimp": "^1.6.0"
+  }
+}
