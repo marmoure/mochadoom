@@ -18,6 +18,8 @@ package i;
 import java.awt.image.BufferedImage;
 import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
+import java.io.FileDescriptor;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -38,10 +40,12 @@ public class StdoutFrameWriter {
 
     private int frameNumber = 0;
 
-    public StdoutFrameWriter() {
-        // Wrap stdout in a BufferedOutputStream for throughput, then in
-        // DataOutputStream for convenient multi-byte writes.
-        this.out = new DataOutputStream(new BufferedOutputStream(System.out, 256 * 1024));
+    public StdoutFrameWriter() throws IOException {
+        // FileDescriptor.out is the real fd 1 (stdout), unaffected by
+        // System.setOut() which only redirects the Java PrintStream wrapper.
+        this.out = new DataOutputStream(
+            new BufferedOutputStream(new FileOutputStream(FileDescriptor.out), 256 * 1024)
+        );
     }
 
     /**

@@ -37,7 +37,7 @@ const JPEG_QUALITY = 80;   // 0-100
 const SPAWN_GAME  = process.argv.includes('--spawn');
 const GAME_DIR    = path.resolve(__dirname, '..');
 const GAME_CMD    = 'java';
-const GAME_ARGS   = ['-jar', 'src/mochadoom.jar', '-stdout'];
+const GAME_ARGS   = ['-jar', 'src/mochadoom.jar', '-stdout', '-nosound'];
 
 // ---------------------------------------------------------------------------
 // HTTP server — serves index.html + assets
