@@ -2,8 +2,9 @@
  * doom-stream server
  *
  * Reads the binary frame stream produced by StdoutFrameWriter from stdin
- * (pipe mochadoom's stdout here), converts each raw RGBA frame to JPEG,
- * and broadcasts it to all connected browser clients over WebSocket.
+ * (pipe mochadoom's stdout here), or spawns the game itself with --spawn.
+ * Converts each raw RGBA frame to JPEG and broadcasts it to all connected
+ * browser clients over WebSocket.
  *
  * Wire protocol (little-endian):
  *   [4]  magic  = 0x44 0x4F 0x4F 0x4D  ("DOOM")
@@ -12,10 +13,10 @@
  *   [4]  height       (int32 LE)
  *   [W*H*4]  RGBA pixel data, row-major top-down
  *
- * Usage:
- *   java -jar src/mochadoom.jar -stdout | node server/server.js
+ * Usage (pipe):
+ *   java -jar src/mochadoom.jar -stdout 2>nul | node server/server.js
  *
- * Or let the server spawn the game itself:
+ * Usage (spawn — recommended, Java logs visible in terminal):
  *   node server/server.js --spawn
  */
 
@@ -176,6 +177,9 @@ if (SPAWN_GAME) {
 
   dataSource = spawn(GAME_CMD, GAME_ARGS, {
     cwd: GAME_DIR,
+    // stdout → we parse binary frames
+    // stderr → inherit so Java log messages appear in the terminal
+    // stdin  → ignore (headless, no input)
     stdio: ['ignore', 'pipe', 'inherit'],
   });
 
@@ -189,7 +193,7 @@ if (SPAWN_GAME) {
     console.error('[spawn] failed to start game:', err.message);
   });
 } else {
-  // Read frames from stdin (piped from the Java process)
+  // Read frames from stdin (pipe: java ... -stdout 2>nul | node server/server.js)
   process.stdin.on('data', (chunk) => feedData(chunk));
   process.stdin.on('end', () => {
     console.log('[stdin] EOF — game stream ended');
@@ -203,8 +207,12 @@ if (SPAWN_GAME) {
 // ---------------------------------------------------------------------------
 httpServer.listen(PORT, () => {
   console.log(`\n🎮  DOOM stream server running at http://localhost:${PORT}\n`);
-  if (!SPAWN_GAME) {
-    console.log('Pipe the game here:');
-    console.log(`  java -jar src/mochadoom.jar -stdout | node server/server.js\n`);
+  if (SPAWN_GAME) {
+    console.log('Game process will start now. Open the URL above in your browser.\n');
+  } else {
+    console.log('Pipe the game here (Java logs go to stderr, not stdout):');
+    console.log(`  java -jar src/mochadoom.jar -stdout 2>nul | node server/server.js\n`);
+    console.log('Or use --spawn to let the server manage the process:');
+    console.log(`  node server/server.js --spawn\n`);
   }
 });

@@ -117,11 +117,13 @@ public class Engine {
             this.windowController   = null;
             this.stdoutWriter       = new StdoutFrameWriter();
 
-            // -outfile <path>: append RGBA frames to a binary file instead of / in addition to stdout.
-            final String outfilePath = cvm.present(CommandVariable.OUTFILE)
-                ? cvm.get(CommandVariable.OUTFILE, String.class, 0).orElse("doom_frames.bin")
-                : "doom_frames.bin"; // default when -stdout is active
-            this.fileWriter = new FileFrameWriter(outfilePath);
+            // -outfile <path>: append RGBA frames to a binary file (only when explicitly requested).
+            if (cvm.present(CommandVariable.OUTFILE)) {
+                final String outfilePath = cvm.get(CommandVariable.OUTFILE, String.class, 0).orElse("doom_frames.bin");
+                this.fileWriter = new FileFrameWriter(outfilePath);
+            } else {
+                this.fileWriter = null;
+            }
 
             // -demokeys: activate synthetic key-event driver.
             this.demoKeyDriver = cvm.bool(CommandVariable.DEMOKEYS) ? new DemoKeyDriver() : null;
@@ -176,13 +178,15 @@ public class Engine {
      * Temporary solution. Will be later moved in more detalied place
      */
     public static void updateFrame() {
-        if (instance.fileWriter != null) {
-            // Headless file mode: append RGBA frame packet to output file
-            instance.fileWriter.writeFrame(instance.DOOM.graphicSystem);
-        } else if (instance.stdoutWriter != null) {
+        if (instance.stdoutWriter != null) {
             // Headless stdout mode: write RGBA frame packet to stdout
             instance.stdoutWriter.writeFrame(instance.DOOM.graphicSystem);
-        } else {
+        }
+        if (instance.fileWriter != null) {
+            // Headless file mode: also append RGBA frame packet to output file
+            instance.fileWriter.writeFrame(instance.DOOM.graphicSystem);
+        }
+        if (instance.stdoutWriter == null && instance.fileWriter == null) {
             // Normal mode: repaint the AWT window
             instance.windowController.updateFrame();
         }
