@@ -31,6 +31,7 @@ import static g.Signals.ScanCode.*;
 import i.DemoKeyDriver;
 import i.FileFrameWriter;
 import i.Strings;
+import i.StdinKeyReader;
 import i.StdoutFrameWriter;
 import java.io.IOException;
 import java.util.Arrays;
@@ -131,6 +132,11 @@ public class Engine {
 
             // -demokeys: activate synthetic key-event driver.
             this.demoKeyDriver = cvm.bool(CommandVariable.DEMOKEYS) ? new DemoKeyDriver() : null;
+
+            // Start stdin key reader so browser can inject input via the relay.
+            final Thread stdinThread = new Thread(new StdinKeyReader(this.DOOM), "stdin-key-reader");
+            stdinThread.setDaemon(true);
+            stdinThread.start();
         } else {
             // ---- NORMAL MODE: AWT canvas window ----
             this.headlessController = null;

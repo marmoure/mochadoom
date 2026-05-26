@@ -84,6 +84,16 @@ wss.on('connection', (ws) => {
     ws.send(lastJpegFrame);
   }
 
+  ws.on('message', (data) => {
+    if (!SPAWN_GAME || !dataSource || !dataSource.stdin) return;
+    try {
+      const { t, k } = JSON.parse(data);
+      if ((t === 'd' || t === 'u') && typeof k === 'string') {
+        dataSource.stdin.write(`${t} ${k}\n`);
+      }
+    } catch (_) { /* ignore malformed messages */ }
+  });
+
   ws.on('close', () => {
     clientCount--;
     console.log(`[ws] client disconnected (total: ${clientCount})`);
@@ -179,8 +189,8 @@ if (SPAWN_GAME) {
     cwd: GAME_DIR,
     // stdout → we parse binary frames
     // stderr → inherit so Java log messages appear in the terminal
-    // stdin  → ignore (headless, no input)
-    stdio: ['ignore', 'pipe', 'inherit'],
+    // stdin  → pipe so browser key events can be forwarded
+    stdio: ['pipe', 'pipe', 'inherit'],
   });
 
   dataSource.stdout.on('data', (chunk) => feedData(chunk));
