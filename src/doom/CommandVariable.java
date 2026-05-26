@@ -82,7 +82,8 @@ public enum CommandVariable {
     GREYPAL,
     STDOUT,
     OUTFILE(String.class),
-    DEMOKEYS;
+    DEMOKEYS,
+    FPS(Integer.class);
     
     public final char prefix;
     public final Class<?>[] arguments;

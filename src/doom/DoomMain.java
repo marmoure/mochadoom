@@ -2544,7 +2544,7 @@ public class DoomMain<T, V> extends DoomStatus<T, V> implements IDoomGameNetwork
         this.bppMode = BppMode.chooseBppMode(cVarManager);
         
         // Create real time ticker
-        this.RealTime = new MilliTicker();
+        this.RealTime = new MilliTicker(cVarManager.get(doom.CommandVariable.FPS, Integer.class, 0).orElse(60));
 
         // Doommain is both "main" and handles most of the game status.
         this.gameNetworking = this; // DoomMain also handles its own Game Networking.

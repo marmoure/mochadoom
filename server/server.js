@@ -22,31 +22,31 @@
 
 'use strict';
 
-const http        = require('http');
-const path        = require('path');
-const fs          = require('fs');
+const http = require('http');
+const path = require('path');
+const fs = require('fs');
 const { WebSocketServer } = require('ws');
-const { Jimp }    = require('jimp');
-const { spawn }   = require('child_process');
+const { Jimp } = require('jimp');
+const { spawn } = require('child_process');
 
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-const PORT        = process.env.PORT || 8080;
+const PORT = process.env.PORT || 8080;
 const JPEG_QUALITY = 80;   // 0-100
-const SPAWN_GAME  = process.argv.includes('--spawn');
-const GAME_DIR    = path.resolve(__dirname, '..');
-const GAME_CMD    = 'java';
-const GAME_ARGS   = ['-jar', 'src/mochadoom.jar', '-stdout', '-nosound'];
+const SPAWN_GAME = process.argv.includes('--spawn');
+const GAME_DIR = path.resolve(__dirname, '..');
+const GAME_CMD = 'java';
+const GAME_ARGS = ['-jar', 'src/mochadoom.jar', '-stdout', '-nosound', '-fps', '60'];
 
 // ---------------------------------------------------------------------------
 // HTTP server — serves index.html + assets
 // ---------------------------------------------------------------------------
 const MIME = {
   '.html': 'text/html; charset=utf-8',
-  '.js':   'application/javascript',
-  '.css':  'text/css',
-  '.ico':  'image/x-icon',
+  '.js': 'application/javascript',
+  '.css': 'text/css',
+  '.ico': 'image/x-icon',
 };
 
 const httpServer = http.createServer((req, res) => {
@@ -99,7 +99,7 @@ wss.on('connection', (ws) => {
     console.log(`[ws] client disconnected (total: ${clientCount})`);
   });
 
-  ws.on('error', () => {}); // swallow individual client errors
+  ws.on('error', () => { }); // swallow individual client errors
 });
 
 /** Broadcast a Buffer to all connected clients. */
@@ -117,9 +117,9 @@ function broadcast(buf) {
 const MAGIC = Buffer.from([0x44, 0x4f, 0x4f, 0x4d]); // "DOOM"
 const HEADER_SIZE = 16; // 4 magic + 4 frame# + 4 width + 4 height
 
-let recvBuf     = Buffer.alloc(0);
+let recvBuf = Buffer.alloc(0);
 let lastJpegFrame = null;
-let frameCount  = 0;
+let frameCount = 0;
 
 /**
  * Feed raw bytes from the game process; parse complete frames and encode them.
@@ -145,8 +145,8 @@ async function feedData(chunk) {
     }
 
     const frameNum = recvBuf.readInt32LE(4);
-    const w        = recvBuf.readInt32LE(8);
-    const h        = recvBuf.readInt32LE(12);
+    const w = recvBuf.readInt32LE(8);
+    const h = recvBuf.readInt32LE(12);
     const pixelLen = w * h * 4;
     const totalLen = HEADER_SIZE + pixelLen;
 
