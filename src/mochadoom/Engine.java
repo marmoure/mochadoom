@@ -28,6 +28,8 @@ import doom.CommandVariable;
 import doom.ConfigManager;
 import doom.DoomMain;
 import static g.Signals.ScanCode.*;
+import i.DemoKeyDriver;
+import i.FileFrameWriter;
 import i.Strings;
 import i.StdoutFrameWriter;
 import java.io.IOException;
@@ -86,6 +88,12 @@ public class Engine {
     /** Non-null only in headless (-stdout) mode; writes RGBA frames to stdout. */
     private final StdoutFrameWriter stdoutWriter;
 
+    /** Non-null when -outfile is specified; appends RGBA frames to a binary file. */
+    private final FileFrameWriter fileWriter;
+
+    /** Non-null when -demokeys is specified; injects synthetic key events each tick. */
+    private final DemoKeyDriver demoKeyDriver;
+
     private final DoomMain<?, ?> DOOM;
     
     @SuppressWarnings("unchecked")
@@ -104,15 +112,25 @@ public class Engine {
         final boolean headless = cvm.bool(CommandVariable.STDOUT);
 
         if (headless) {
-            // ---- HEADLESS MODE: no AWT window, output goes to stdout ----
+            // ---- HEADLESS MODE: no AWT window, output goes to stdout / file ----
             this.headlessController = new HeadlessController();
             this.windowController   = null;
             this.stdoutWriter       = new StdoutFrameWriter();
-            // No key-interest listeners needed; input comes from demo playback.
+
+            // -outfile <path>: append RGBA frames to a binary file instead of / in addition to stdout.
+            final String outfilePath = cvm.present(CommandVariable.OUTFILE)
+                ? cvm.get(CommandVariable.OUTFILE, String.class, 0).orElse("doom_frames.bin")
+                : "doom_frames.bin"; // default when -stdout is active
+            this.fileWriter = new FileFrameWriter(outfilePath);
+
+            // -demokeys: activate synthetic key-event driver.
+            this.demoKeyDriver = cvm.bool(CommandVariable.DEMOKEYS) ? new DemoKeyDriver() : null;
         } else {
             // ---- NORMAL MODE: AWT canvas window ----
             this.headlessController = null;
             this.stdoutWriter       = null;
+            this.fileWriter         = null;
+            this.demoKeyDriver      = null;
             this.windowController   = DoomWindow.createCanvasWindowController(
                 DOOM.graphicSystem::getScreenImage,
                 DOOM::PostEvent,
@@ -158,13 +176,25 @@ public class Engine {
      * Temporary solution. Will be later moved in more detalied place
      */
     public static void updateFrame() {
-        if (instance.stdoutWriter != null) {
-            // Headless mode: write RGBA frame packet to stdout
+        if (instance.fileWriter != null) {
+            // Headless file mode: append RGBA frame packet to output file
+            instance.fileWriter.writeFrame(instance.DOOM.graphicSystem);
+        } else if (instance.stdoutWriter != null) {
+            // Headless stdout mode: write RGBA frame packet to stdout
             instance.stdoutWriter.writeFrame(instance.DOOM.graphicSystem);
         } else {
             // Normal mode: repaint the AWT window
             instance.windowController.updateFrame();
         }
+    }
+
+    /**
+     * Returns the active {@link DemoKeyDriver}, or {@code null} if
+     * {@code -demokeys} was not specified.
+     */
+    public static DemoKeyDriver getDemoKeyDriver() {
+        final Engine local = instance;
+        return local != null ? local.demoKeyDriver : null;
     }
         
     public String getWindowTitle(double frames) {

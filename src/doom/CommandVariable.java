@@ -80,7 +80,9 @@ public enum CommandVariable {
     SHOWFPS,
     JAVARANDOM,
     GREYPAL,
-    STDOUT;
+    STDOUT,
+    OUTFILE(String.class),
+    DEMOKEYS;
     
     public final char prefix;
     public final Class<?>[] arguments;

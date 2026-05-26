@@ -424,6 +424,11 @@ public class DoomMain<T, V> extends DoomStatus<T, V> implements IDoomGameNetwork
         while (true) {
             // frame syncronous IO operations
             I_StartFrame:;
+
+            // Inject synthetic demo key events if the driver is active (headless mode).
+            if (Engine.getDemoKeyDriver() != null) {
+                Engine.getDemoKeyDriver().tick(gametic, this);
+            }
             
             // process one or more tics
             if (singletics) {
