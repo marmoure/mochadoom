@@ -49,6 +49,10 @@ public class Engine {
         for (final String arg : argv) {
             if ("-stdout".equalsIgnoreCase(arg)) {
                 System.setProperty("java.awt.headless", "true");
+                // Redirect System.out → System.err so that all text logging
+                // (init messages, debug prints, etc.) goes to stderr and does
+                // NOT corrupt the binary RGBA frame stream on stdout.
+                System.setOut(System.err);
                 break;
             }
         }

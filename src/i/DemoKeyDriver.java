@@ -15,8 +15,7 @@
  *   tic 25  — left-arrow key DOWN    (start turning left)
  *   tic 30  — left-arrow key UP      (stop turning left)
  *
- * After the last event the driver counts EXIT_DELAY_FRAMES more frames then
- * calls System.exit(0) so the final rendered frames are flushed to disk.
+ * After the last event the game continues running indefinitely.
  */
 package i;
 
@@ -35,8 +34,6 @@ public class DemoKeyDriver {
 
     private static final Logger LOGGER = Loggers.getLogger(DemoKeyDriver.class.getName());
 
-    /** Extra frames to capture after the last key event before exiting. */
-    private static final int EXIT_DELAY_FRAMES = 10;
 
     // -----------------------------------------------------------------------
     //  Hard-coded event schedule
@@ -55,7 +52,6 @@ public class DemoKeyDriver {
     // -----------------------------------------------------------------------
 
     private int nextEvent = 0;    // index into TIC/KEY/EV arrays
-    private int exitCountdown = -1; // -1 = not yet counting down
 
     /**
      * Called once per game loop iteration.  Injects any due events and,
@@ -74,17 +70,5 @@ public class DemoKeyDriver {
             nextEvent++;
         }
 
-        // Once all events have fired, start the exit countdown
-        if (nextEvent >= TIC.length) {
-            if (exitCountdown < 0) {
-                exitCountdown = EXIT_DELAY_FRAMES;
-                LOGGER.info("DemoKeyDriver: all events sent, exiting in "
-                        + EXIT_DELAY_FRAMES + " frames");
-            }
-            if (exitCountdown-- <= 0) {
-                LOGGER.info("DemoKeyDriver: exit countdown reached — shutting down");
-                System.exit(0);
-            }
-        }
     }
 }
