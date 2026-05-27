@@ -83,6 +83,7 @@ public enum CommandVariable {
     STDOUT,
     OUTFILE(String.class),
     DEMOKEYS,
+    WEBSOCKET(Integer.class),
     FPS(Integer.class);
     
     public final char prefix;

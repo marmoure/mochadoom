@@ -1,23 +1,17 @@
 /**
  * doom-stream server
  *
- * Reads the binary frame stream produced by StdoutFrameWriter from stdin
- * (pipe mochadoom's stdout here), or spawns the game itself with --spawn.
- * Converts each raw RGBA frame to JPEG and broadcasts it to all connected
- * browser clients over WebSocket.
+ * Relays between the Java game (WebSocket server) and browser clients.
+ * Java encodes frames as JPEG and sends them over WebSocket; this server
+ * forwards them to all connected browser clients and routes key events back.
  *
- * Wire protocol (little-endian):
- *   [4]  magic  = 0x44 0x4F 0x4F 0x4D  ("DOOM")
- *   [4]  frame number (int32 LE)
- *   [4]  width        (int32 LE)
- *   [4]  height       (int32 LE)
- *   [W*H*4]  RGBA pixel data, row-major top-down
+ * Java game runs with:  -websocket <GAME_WS_PORT>  (default 3001)
  *
- * Usage (pipe):
- *   java -jar src/mochadoom.jar -stdout 2>nul | node server/server.js
- *
- * Usage (spawn — recommended, Java logs visible in terminal):
+ * Usage (spawn — recommended):
  *   node server/server.js --spawn
+ *
+ * Usage (connect to already-running game):
+ *   node server/server.js
  */
 
 'use strict';
@@ -25,19 +19,18 @@
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
-const { WebSocketServer } = require('ws');
-const { Jimp } = require('jimp');
+const { WebSocketServer, WebSocket } = require('ws');
 const { spawn } = require('child_process');
 
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-const PORT = process.env.PORT || 8080;
-const JPEG_QUALITY = 80;   // 0-100
-const SPAWN_GAME = process.argv.includes('--spawn');
-const GAME_DIR = path.resolve(__dirname, '..');
-const GAME_CMD = 'java';
-const GAME_ARGS = ['-jar', 'src/mochadoom.jar', '-stdout', '-nosound', '-fps', '60'];
+const PORT         = process.env.PORT         || 8080;
+const GAME_WS_PORT = process.env.GAME_WS_PORT || 3001;
+const SPAWN_GAME   = process.argv.includes('--spawn');
+const GAME_DIR     = path.resolve(__dirname, '..');
+const GAME_CMD     = 'java';
+const GAME_ARGS    = ['-jar', 'src/mochadoom.jar', '-websocket', String(GAME_WS_PORT), '-nosound', '-fps', '60'];
 
 // ---------------------------------------------------------------------------
 // HTTP server — serves index.html + assets
@@ -74,22 +67,23 @@ const httpServer = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server: httpServer });
 
 let clientCount = 0;
+let lastJpegFrame = null;
+let gameWs = null;
 
 wss.on('connection', (ws) => {
   clientCount++;
   console.log(`[ws] client connected  (total: ${clientCount})`);
 
   // Send the last known frame immediately so the client isn't blank
-  if (lastJpegFrame) {
-    ws.send(lastJpegFrame);
-  }
+  if (lastJpegFrame) ws.send(lastJpegFrame, { binary: true });
 
   ws.on('message', (data) => {
-    if (!SPAWN_GAME || !dataSource || !dataSource.stdin) return;
+    // Forward browser key events to the Java game
+    if (!gameWs || gameWs.readyState !== WebSocket.OPEN) return;
     try {
       const { t, k } = JSON.parse(data);
       if ((t === 'd' || t === 'u') && typeof k === 'string') {
-        dataSource.stdin.write(`${t} ${k}\n`);
+        gameWs.send(JSON.stringify({ t, k }));
       }
     } catch (_) { /* ignore malformed messages */ }
   });
@@ -99,130 +93,82 @@ wss.on('connection', (ws) => {
     console.log(`[ws] client disconnected (total: ${clientCount})`);
   });
 
-  ws.on('error', () => { }); // swallow individual client errors
+  ws.on('error', () => { });
 });
 
-/** Broadcast a Buffer to all connected clients. */
+/** Broadcast a Buffer to all connected browser clients. */
 function broadcast(buf) {
   wss.clients.forEach((ws) => {
-    if (ws.readyState === ws.OPEN) {
-      ws.send(buf, { binary: true });
-    }
+    if (ws.readyState === ws.OPEN) ws.send(buf, { binary: true });
   });
 }
 
 // ---------------------------------------------------------------------------
-// Frame parser
+// WebSocket connection to the Java game
 // ---------------------------------------------------------------------------
-const MAGIC = Buffer.from([0x44, 0x4f, 0x4f, 0x4d]); // "DOOM"
-const HEADER_SIZE = 16; // 4 magic + 4 frame# + 4 width + 4 height
-
-let recvBuf = Buffer.alloc(0);
-let lastJpegFrame = null;
 let frameCount = 0;
 
-/**
- * Feed raw bytes from the game process; parse complete frames and encode them.
- */
-async function feedData(chunk) {
-  recvBuf = Buffer.concat([recvBuf, chunk]);
+function connectToGame() {
+  const url = `ws://localhost:${GAME_WS_PORT}`;
+  console.log(`[game-ws] connecting to ${url}`);
+  gameWs = new WebSocket(url);
 
-  while (true) {
-    // Need at least a full header
-    if (recvBuf.length < HEADER_SIZE) break;
+  gameWs.on('open', () => {
+    console.log('[game-ws] connected to Java game');
+  });
 
-    // Verify magic
-    if (!recvBuf.slice(0, 4).equals(MAGIC)) {
-      // Scan forward for the next magic
-      const idx = recvBuf.indexOf(MAGIC, 1);
-      if (idx === -1) {
-        recvBuf = Buffer.alloc(0);
-        break;
-      }
-      console.warn(`[parser] resync: skipped ${idx} bytes`);
-      recvBuf = recvBuf.slice(idx);
-      continue;
-    }
-
-    const frameNum = recvBuf.readInt32LE(4);
-    const w = recvBuf.readInt32LE(8);
-    const h = recvBuf.readInt32LE(12);
-    const pixelLen = w * h * 4;
-    const totalLen = HEADER_SIZE + pixelLen;
-
-    // Wait for the full payload
-    if (recvBuf.length < totalLen) break;
-
-    // Extract RGBA pixels
-    const rgba = recvBuf.slice(HEADER_SIZE, totalLen);
-    recvBuf = recvBuf.slice(totalLen);
-
+  gameWs.on('message', (data, isBinary) => {
+    if (!isBinary) return; // only relay binary JPEG frames
     frameCount++;
-    if (frameCount % 30 === 0) {
-      console.log(`[parser] frame ${frameNum}  ${w}x${h}  total=${frameCount}`);
-    }
+    if (frameCount % 60 === 0) console.log(`[game-ws] relayed ${frameCount} frames`);
+    lastJpegFrame = data;
+    broadcast(data);
+  });
 
-    // Encode to JPEG asynchronously so we don't block parsing
-    encodeAndBroadcast(rgba, w, h).catch((e) => console.error('[encode]', e));
-  }
-}
+  gameWs.on('close', () => {
+    console.warn('[game-ws] disconnected — retrying in 2s');
+    gameWs = null;
+    setTimeout(connectToGame, 2000);
+  });
 
-async function encodeAndBroadcast(rgbaBuffer, w, h) {
-  // Jimp accepts raw RGBA buffer directly
-  const image = new Jimp({ width: w, height: h, data: rgbaBuffer });
-  const jpegBuf = await image.getBuffer('image/jpeg', { quality: JPEG_QUALITY });
-
-  lastJpegFrame = jpegBuf;
-  broadcast(jpegBuf);
+  gameWs.on('error', (e) => {
+    console.error('[game-ws] error:', e.message);
+    // close event fires next and handles retry
+  });
 }
 
 // ---------------------------------------------------------------------------
-// Attach the data source (stdin or spawned process)
+// Spawn the Java game (optional) then connect via WebSocket
 // ---------------------------------------------------------------------------
-let dataSource;
-
 if (SPAWN_GAME) {
   console.log(`[spawn] cd ${GAME_DIR}`);
   console.log(`[spawn] ${GAME_CMD} ${GAME_ARGS.join(' ')}`);
 
-  dataSource = spawn(GAME_CMD, GAME_ARGS, {
+  const proc = spawn(GAME_CMD, GAME_ARGS, {
     cwd: GAME_DIR,
-    // stdout → we parse binary frames
-    // stderr → inherit so Java log messages appear in the terminal
-    // stdin  → pipe so browser key events can be forwarded
-    stdio: ['pipe', 'pipe', 'inherit'],
+    stdio: ['ignore', 'ignore', 'inherit'], // stderr only — no stdout pipe needed
   });
 
-  dataSource.stdout.on('data', (chunk) => feedData(chunk));
+  proc.on('close', (code) => console.log(`[spawn] game exited with code ${code}`));
+  proc.on('error', (err) => console.error('[spawn] failed to start game:', err.message));
 
-  dataSource.on('close', (code) => {
-    console.log(`[spawn] game process exited with code ${code}`);
-  });
-
-  dataSource.on('error', (err) => {
-    console.error('[spawn] failed to start game:', err.message);
-  });
+  // Give Java a moment to bind its WebSocket port before we connect
+  setTimeout(connectToGame, 1500);
 } else {
-  // Read frames from stdin (pipe: java ... -stdout 2>nul | node server/server.js)
-  process.stdin.on('data', (chunk) => feedData(chunk));
-  process.stdin.on('end', () => {
-    console.log('[stdin] EOF — game stream ended');
-  });
-  // Prevent Node from exiting when stdin ends if we still have clients
-  process.stdin.resume();
+  connectToGame();
 }
 
 // ---------------------------------------------------------------------------
 // Start listening
 // ---------------------------------------------------------------------------
 httpServer.listen(PORT, () => {
-  console.log(`\n🎮  DOOM stream server running at http://localhost:${PORT}\n`);
+  console.log(`\n🎮  DOOM stream server → http://localhost:${PORT}\n`);
   if (SPAWN_GAME) {
     console.log('Game process will start now. Open the URL above in your browser.\n');
   } else {
-    console.log('Pipe the game here (Java logs go to stderr, not stdout):');
-    console.log(`  java -jar src/mochadoom.jar -stdout 2>nul | node server/server.js\n`);
-    console.log('Or use --spawn to let the server manage the process:');
+    console.log(`Waiting for Java game on ws://localhost:${GAME_WS_PORT}`);
+    console.log(`  java -jar src/mochadoom.jar -websocket ${GAME_WS_PORT} -nosound -fps 60\n`);
+    console.log('Or let this server spawn the game automatically:');
     console.log(`  node server/server.js --spawn\n`);
   }
 });

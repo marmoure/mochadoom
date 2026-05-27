@@ -30,9 +30,11 @@ import doom.DoomMain;
 import static g.Signals.ScanCode.*;
 import i.DemoKeyDriver;
 import i.FileFrameWriter;
+import i.GameWebSocketServer;
 import i.Strings;
 import i.StdinKeyReader;
 import i.StdoutFrameWriter;
+import i.WebSocketFrameWriter;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.logging.Level;
@@ -42,43 +44,56 @@ public class Engine {
     private static volatile Engine instance;
     
     /**
-     * Mocha Doom engine entry point
+     * Mocha Doom engine entry point.
      */
     public static void main(final String[] argv) throws IOException {
-        // Must be set BEFORE any AWT class is loaded — do it as the very
-        // first thing based on a raw argv scan (CVarManager isn't built yet).
-        for (final String arg : argv) {
-            if ("-stdout".equalsIgnoreCase(arg)) {
+        startGame(argv);
+
+        if (instance.wsServer != null) {
+            final int port = instance.cvm.get(CommandVariable.WEBSOCKET, Integer.class, 0).orElse(8080);
+            startWebSocketServer(port);
+        }
+
+        // never returns
+        try {
+            instance.DOOM.setupLoop();
+        } catch (Exception e) {
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
+
+    /**
+     * Initialise the game engine with the given command-line arguments.
+     * Must be called before {@link #startWebSocketServer(int)} or
+     * {@link DoomMain#setupLoop()}.
+     */
+    public static void startGame(final String[] args) throws IOException {
+        // Must be set BEFORE any AWT class is loaded.
+        for (final String arg : args) {
+            if ("-stdout".equalsIgnoreCase(arg) || "-websocket".equalsIgnoreCase(arg)) {
                 System.setProperty("java.awt.headless", "true");
-                // Redirect System.out → System.err so that all text logging
-                // (init messages, debug prints, etc.) goes to stderr and does
-                // NOT corrupt the binary RGBA frame stream on stdout.
                 System.setOut(System.err);
                 break;
             }
         }
-
-        final Engine local;
         synchronized (Engine.class) {
-            local = new Engine(argv);
+            if (instance == null) {
+                instance = new Engine(args);
+            }
         }
-        
-        /**
-         * Add eventHandler listeners to JFrame and its Canvas elememt
-         */
-        /*content.addKeyListener(listener);        
-        content.addMouseListener(listener);
-        content.addMouseMotionListener(listener);
-        frame.addComponentListener(listener);
-        frame.addWindowFocusListener(listener);
-        frame.addWindowListener(listener);*/
-        // never returns
-        try {
-            local.DOOM.setupLoop();
-        } catch(Exception e) {
-            e.printStackTrace();
-            System.exit(1);
-        }
+    }
+
+    /**
+     * Start the embedded WebSocket server on the given port.
+     * Call {@link #startGame(String[])} first, and only when the engine was
+     * initialised with the {@code -websocket} flag.
+     */
+    public static void startWebSocketServer(final int port) {
+        final Engine local = instance;
+        if (local == null) throw new IllegalStateException("Call startGame() first");
+        if (local.wsServer == null) throw new IllegalStateException("Engine not in -websocket mode");
+        local.wsServer.start(port, local.DOOM);
     }  
     
     public final CVarManager cvm;
@@ -99,6 +114,12 @@ public class Engine {
     /** Non-null when -demokeys is specified; injects synthetic key events each tick. */
     private final DemoKeyDriver demoKeyDriver;
 
+    /** Non-null in -websocket mode; accepts browser connections and receives key events. */
+    private final GameWebSocketServer wsServer;
+
+    /** Non-null in -websocket mode; encodes frames as JPEG and broadcasts via wsServer. */
+    private final WebSocketFrameWriter wsFrameWriter;
+
     private final DoomMain<?, ?> DOOM;
     
     @SuppressWarnings("unchecked")
@@ -114,13 +135,25 @@ public class Engine {
         // initializes stuff
         this.DOOM = new DoomMain<>();
 
-        final boolean headless = cvm.bool(CommandVariable.STDOUT);
+        final boolean websocket = cvm.present(CommandVariable.WEBSOCKET);
+        final boolean headless  = cvm.bool(CommandVariable.STDOUT);
 
-        if (headless) {
+        if (websocket) {
+            // ---- WEBSOCKET MODE: no AWT window, frames sent as JPEG over WebSocket ----
+            this.headlessController = new HeadlessController();
+            this.windowController   = null;
+            this.stdoutWriter       = null;
+            this.fileWriter         = null;
+            this.demoKeyDriver      = null;
+            this.wsServer           = new GameWebSocketServer();
+            this.wsFrameWriter      = new WebSocketFrameWriter(wsServer);
+        } else if (headless) {
             // ---- HEADLESS MODE: no AWT window, output goes to stdout / file ----
             this.headlessController = new HeadlessController();
             this.windowController   = null;
             this.stdoutWriter       = new StdoutFrameWriter();
+            this.wsServer           = null;
+            this.wsFrameWriter      = null;
 
             // -outfile <path>: append RGBA frames to a binary file (only when explicitly requested).
             if (cvm.present(CommandVariable.OUTFILE)) {
@@ -143,6 +176,8 @@ public class Engine {
             this.stdoutWriter       = null;
             this.fileWriter         = null;
             this.demoKeyDriver      = null;
+            this.wsServer           = null;
+            this.wsFrameWriter      = null;
             this.windowController   = DoomWindow.createCanvasWindowController(
                 DOOM.graphicSystem::getScreenImage,
                 DOOM::PostEvent,
@@ -184,20 +219,17 @@ public class Engine {
         }
     }
     
-    /**
-     * Temporary solution. Will be later moved in more detalied place
-     */
     public static void updateFrame() {
+        if (instance.wsFrameWriter != null) {
+            instance.wsFrameWriter.writeFrame(instance.DOOM.graphicSystem);
+        }
         if (instance.stdoutWriter != null) {
-            // Headless stdout mode: write RGBA frame packet to stdout
             instance.stdoutWriter.writeFrame(instance.DOOM.graphicSystem);
         }
         if (instance.fileWriter != null) {
-            // Headless file mode: also append RGBA frame packet to output file
             instance.fileWriter.writeFrame(instance.DOOM.graphicSystem);
         }
-        if (instance.stdoutWriter == null && instance.fileWriter == null) {
-            // Normal mode: repaint the AWT window
+        if (instance.wsFrameWriter == null && instance.stdoutWriter == null && instance.fileWriter == null) {
             instance.windowController.updateFrame();
         }
     }
