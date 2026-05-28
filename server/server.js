@@ -83,7 +83,7 @@ wss.on('connection', (ws) => {
     try {
       const { t, k } = JSON.parse(data);
       if ((t === 'd' || t === 'u') && typeof k === 'string') {
-        gameWs.send(JSON.stringify({ t, k }));
+        gameWs.send(data.toString());
       }
     } catch (_) { /* ignore malformed messages */ }
   });

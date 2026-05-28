@@ -252,6 +252,7 @@
     }
     #reconnect-btn:hover { background: var(--red); }
 
+
     /* ── Responsive ──────────────────────────────────────────────────── */
     @media (max-width: 640px) {
       .stats { display: none; }
@@ -289,6 +290,7 @@
       <p>WAITING FOR DOOM STREAM<span class="blink">_</span></p>
       <button id="reconnect-btn">RECONNECT</button>
     </div>
+
   </div>
 </main>
 
@@ -309,7 +311,6 @@ const ctx          = canvas.getContext('2d');
 const waiting      = document.getElementById('waiting');
 const statusPill   = document.getElementById('status-pill');
 const statusText   = document.getElementById('status-text');
-const statusDot    = document.getElementById('status-dot');
 const statFrame    = document.getElementById('stat-frame');
 const statRes      = document.getElementById('stat-res');
 const statSize     = document.getElementById('stat-size');
@@ -317,18 +318,16 @@ const fpsValue     = document.getElementById('fps-value');
 const reconnectBtn = document.getElementById('reconnect-btn');
 
 // ── State ───────────────────────────────────────────────────────────────
-let frameCount = 0;
+let frameCount  = 0;
 let lastFpsTime = performance.now();
-let lastFrameTime = performance.now();
 
 // ── FPS counter ─────────────────────────────────────────────────────────
 function updateFps() {
   const now = performance.now();
   const elapsed = (now - lastFpsTime) / 1000;
   if (elapsed >= 1) {
-    const fps = Math.round(frameCount / elapsed);
-    fpsValue.textContent = fps;
-    frameCount = 0;
+    fpsValue.textContent = Math.round(frameCount / elapsed);
+    frameCount  = 0;
     lastFpsTime = now;
   }
 }
@@ -337,43 +336,31 @@ function updateFps() {
 async function renderJpeg(blob) {
   const bitmap = await createImageBitmap(blob);
   const { width: w, height: h } = bitmap;
-
-  // Resize canvas if dimensions changed
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width  = w;
     canvas.height = h;
-
-    // Scale the wrap so the canvas fits nicely inside the viewport
     scaleCanvas(w, h);
   }
-
   ctx.drawImage(bitmap, 0, 0);
-
-  // Stats
   frameCount++;
   statFrame.textContent = (parseInt(statFrame.textContent) || 0) + 1;
   statRes.textContent   = `${w}×${h}`;
   statSize.textContent  = formatBytes(blob.size);
   updateFps();
-  lastFrameTime = performance.now();
 }
 
 function scaleCanvas(w, h) {
-  const main   = document.querySelector('main');
-  const maxW   = main.clientWidth  - 32;
-  const maxH   = main.clientHeight - 16;
-  const scale  = Math.min(maxW / w, maxH / h, 4);  // max 4× zoom
-  const finalW = Math.floor(w * scale);
-  const finalH = Math.floor(h * scale);
-  canvas.style.width  = finalW + 'px';
-  canvas.style.height = finalH + 'px';
+  const main  = document.querySelector('main');
+  const maxW  = main.clientWidth  - 32;
+  const maxH  = main.clientHeight - 16;
+  const scale = Math.min(maxW / w, maxH / h, 4);
+  canvas.style.width  = Math.floor(w * scale) + 'px';
+  canvas.style.height = Math.floor(h * scale) + 'px';
 }
-
 window.addEventListener('resize', () => scaleCanvas(canvas.width, canvas.height));
 
-function formatBytes(bytes) {
-  if (bytes < 1024) return bytes + 'B';
-  return (bytes / 1024).toFixed(1) + 'KB';
+function formatBytes(b) {
+  return b < 1024 ? b + 'B' : (b / 1024).toFixed(1) + 'KB';
 }
 
 // ── WebSocket connection ─────────────────────────────────────────────────
@@ -382,76 +369,81 @@ let reconnectTimer = null;
 let firstFrame = true;
 
 function setStatus(state, label) {
-  statusPill.className = state;
+  statusPill.className   = state;
   statusText.textContent = label;
 }
 
 function connect() {
   if (ws) { ws.onclose = null; ws.close(); }
   clearTimeout(reconnectTimer);
-
-  const url = `ws://${location.host}`;
-  ws = new WebSocket(url);
+  ws = new WebSocket(`ws://${location.host}`);
   ws.binaryType = 'blob';
-
   setStatus('', 'CONNECTING…');
   reconnectBtn.style.display = 'none';
 
   ws.addEventListener('open', () => {
     setStatus('connected', 'LIVE');
-    console.log('[ws] connected');
   });
 
   ws.addEventListener('message', async (evt) => {
-    if (firstFrame) {
-      firstFrame = false;
-      waiting.classList.add('hidden');
-    }
+    if (firstFrame) { firstFrame = false; waiting.classList.add('hidden'); }
     await renderJpeg(evt.data);
   });
 
   ws.addEventListener('close', () => {
     setStatus('disconnected', 'DISCONNECTED');
     reconnectBtn.style.display = 'inline-block';
-    console.warn('[ws] disconnected — retrying in 3s');
     reconnectTimer = setTimeout(connect, 3000);
   });
 
-  ws.addEventListener('error', (e) => {
-    console.error('[ws] error', e);
-  });
+  ws.addEventListener('error', () => {});
 }
-
 reconnectBtn.addEventListener('click', connect);
 
-// ── Keyboard input ───────────────────────────────────────────────────────
-// Keys that need preventDefault to stop the browser from scrolling/zooming.
-const CAPTURE_KEYS = new Set([
-  'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
-  ' ', 'Tab', 'F1', 'F2', 'F3', 'F10', 'F11', 'F12',
-]);
-
-// Normalise browser KeyboardEvent.key to the protocol name Java expects.
-function normaliseKey(key) {
-  if (key === ' ') return 'Space';
-  return key;
+// ── Send helpers ─────────────────────────────────────────────────────────
+function sendKey(type, k) {
+  if (ws && ws.readyState === WebSocket.OPEN)
+    ws.send(JSON.stringify({ t: type, k }));
 }
 
-function sendKey(type, key) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ t: type, k: normaliseKey(key) }));
-  }
+// ── Keyboard — use e.code for physical-key identity ──────────────────────
+// codes that need preventDefault (browser scrolling / shortcuts)
+const CAPTURE_CODES = new Set([
+  'ArrowLeft','ArrowRight','ArrowUp','ArrowDown',
+  'Space','Tab','Backspace',
+  'F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12',
+]);
+
+/**
+ * Map a KeyboardEvent to the game key name Java expects.
+ *   KeyA-KeyZ  → lowercase letter ("a"-"z")
+ *   Digit0-9   → digit string ("0"-"9")
+ *   ShiftLeft/Right / ControlLeft/Right / AltLeft/Right → bare modifier name
+ *   Everything else (arrows, F-keys, Space, Enter, symbol codes…) → e.code as-is
+ */
+function getGameKey(e) {
+  const code = e.code;
+  if (!code) return null;
+  if (code.startsWith('Key'))   return code.slice(3).toLowerCase();
+  if (code.startsWith('Digit')) return code.slice(5);
+  if (code === 'ShiftLeft'   || code === 'ShiftRight')   return 'Shift';
+  if (code === 'ControlLeft' || code === 'ControlRight') return 'Control';
+  if (code === 'AltLeft'     || code === 'AltRight')     return 'Alt';
+  if (code === 'MetaLeft'    || code === 'MetaRight')     return 'Meta';
+  return code;
 }
 
 window.addEventListener('keydown', (e) => {
-  if (CAPTURE_KEYS.has(e.key)) e.preventDefault();
-  if (e.repeat) return; // ignore held-key repeats
-  sendKey('d', e.key);
+  if (CAPTURE_CODES.has(e.code)) e.preventDefault();
+  if (e.repeat) return;
+  const k = getGameKey(e);
+  if (k) sendKey('d', k);
 });
 
 window.addEventListener('keyup', (e) => {
-  if (CAPTURE_KEYS.has(e.key)) e.preventDefault();
-  sendKey('u', e.key);
+  if (CAPTURE_CODES.has(e.code)) e.preventDefault();
+  const k = getGameKey(e);
+  if (k) sendKey('u', k);
 });
 
 // ── Start ────────────────────────────────────────────────────────────────

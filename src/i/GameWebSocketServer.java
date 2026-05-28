@@ -36,24 +36,94 @@ public class GameWebSocketServer {
 
     private static final Map<String, ScanCode> KEY_MAP = new HashMap<>();
     static {
+        // Arrow / navigation
         KEY_MAP.put("ArrowLeft",  ScanCode.SC_LEFT);
         KEY_MAP.put("ArrowRight", ScanCode.SC_RIGHT);
         KEY_MAP.put("ArrowUp",    ScanCode.SC_UP);
         KEY_MAP.put("ArrowDown",  ScanCode.SC_DOWN);
+        KEY_MAP.put("Home",       ScanCode.SC_HOME);
+        KEY_MAP.put("End",        ScanCode.SC_END);
+        KEY_MAP.put("PageUp",     ScanCode.SC_PGUP);
+        KEY_MAP.put("PageDown",   ScanCode.SC_PGDOWN);
+        KEY_MAP.put("Insert",     ScanCode.SC_INSERT);
+        KEY_MAP.put("Delete",     ScanCode.SC_DELETE);
+
+        // Modifiers (browser sends normalised names via getGameKey())
         KEY_MAP.put("Control",    ScanCode.SC_LCTRL);
         KEY_MAP.put("Shift",      ScanCode.SC_LSHIFT);
         KEY_MAP.put("Alt",        ScanCode.SC_LALT);
+
+        // Editing / whitespace
+        KEY_MAP.put("Backspace",  ScanCode.SC_BACKSPACE);
+        KEY_MAP.put("Tab",        ScanCode.SC_TAB);
+        KEY_MAP.put("CapsLock",   ScanCode.SC_CAPSLK);
         KEY_MAP.put("Space",      ScanCode.SC_SPACE);
         KEY_MAP.put("Enter",      ScanCode.SC_ENTER);
         KEY_MAP.put("Escape",     ScanCode.SC_ESCAPE);
-        KEY_MAP.put("Tab",        ScanCode.SC_TAB);
-        KEY_MAP.put("1", ScanCode.SC_1); KEY_MAP.put("2", ScanCode.SC_2);
-        KEY_MAP.put("3", ScanCode.SC_3); KEY_MAP.put("4", ScanCode.SC_4);
-        KEY_MAP.put("5", ScanCode.SC_5); KEY_MAP.put("6", ScanCode.SC_6);
-        KEY_MAP.put("7", ScanCode.SC_7);
+
+        // System
+        KEY_MAP.put("NumLock",    ScanCode.SC_NUMLK);
+        KEY_MAP.put("ScrollLock", ScanCode.SC_SCROLLLK);
+        KEY_MAP.put("Pause",      ScanCode.SC_PAUSE);
+        KEY_MAP.put("PrintScreen",ScanCode.SC_PRTSCRN);
+
+        // Letters — browser normalises KeyX codes to lowercase via getGameKey()
+        KEY_MAP.put("a", ScanCode.SC_A); KEY_MAP.put("b", ScanCode.SC_B);
+        KEY_MAP.put("c", ScanCode.SC_C); KEY_MAP.put("d", ScanCode.SC_D);
+        KEY_MAP.put("e", ScanCode.SC_E); KEY_MAP.put("f", ScanCode.SC_F);
+        KEY_MAP.put("g", ScanCode.SC_G); KEY_MAP.put("h", ScanCode.SC_H);
+        KEY_MAP.put("i", ScanCode.SC_I); KEY_MAP.put("j", ScanCode.SC_J);
+        KEY_MAP.put("k", ScanCode.SC_K); KEY_MAP.put("l", ScanCode.SC_L);
+        KEY_MAP.put("m", ScanCode.SC_M); KEY_MAP.put("n", ScanCode.SC_N);
+        KEY_MAP.put("o", ScanCode.SC_O); KEY_MAP.put("p", ScanCode.SC_P);
+        KEY_MAP.put("q", ScanCode.SC_Q); KEY_MAP.put("r", ScanCode.SC_R);
+        KEY_MAP.put("s", ScanCode.SC_S); KEY_MAP.put("t", ScanCode.SC_T);
+        KEY_MAP.put("u", ScanCode.SC_U); KEY_MAP.put("v", ScanCode.SC_V);
+        KEY_MAP.put("w", ScanCode.SC_W); KEY_MAP.put("x", ScanCode.SC_X);
+        KEY_MAP.put("y", ScanCode.SC_Y); KEY_MAP.put("z", ScanCode.SC_Z);
+
+        // Digits (Digit0-9 codes stripped to bare digit by getGameKey())
+        KEY_MAP.put("0", ScanCode.SC_0); KEY_MAP.put("1", ScanCode.SC_1);
+        KEY_MAP.put("2", ScanCode.SC_2); KEY_MAP.put("3", ScanCode.SC_3);
+        KEY_MAP.put("4", ScanCode.SC_4); KEY_MAP.put("5", ScanCode.SC_5);
+        KEY_MAP.put("6", ScanCode.SC_6); KEY_MAP.put("7", ScanCode.SC_7);
+        KEY_MAP.put("8", ScanCode.SC_8); KEY_MAP.put("9", ScanCode.SC_9);
+
+        // Symbol / punctuation keys — browser sends e.code directly
+        KEY_MAP.put("Minus",        ScanCode.SC_MINUS);
+        KEY_MAP.put("Equal",        ScanCode.SC_EQUALS);
+        KEY_MAP.put("BracketLeft",  ScanCode.SC_LBRACE);
+        KEY_MAP.put("BracketRight", ScanCode.SC_RBRACE);
+        KEY_MAP.put("Backslash",    ScanCode.SC_BACKSLASH);
+        KEY_MAP.put("Semicolon",    ScanCode.SC_SEMICOLON);
+        KEY_MAP.put("Quote",        ScanCode.SC_QUOTE);
+        KEY_MAP.put("Backquote",    ScanCode.SC_TILDE);
+        KEY_MAP.put("Comma",        ScanCode.SC_COMMA);
+        KEY_MAP.put("Period",       ScanCode.SC_PERIOD);
+        KEY_MAP.put("Slash",        ScanCode.SC_SLASH);
+
+        // Function keys
         KEY_MAP.put("F1",  ScanCode.SC_F1);  KEY_MAP.put("F2",  ScanCode.SC_F2);
-        KEY_MAP.put("F3",  ScanCode.SC_F3);  KEY_MAP.put("F10", ScanCode.SC_F10);
+        KEY_MAP.put("F3",  ScanCode.SC_F3);  KEY_MAP.put("F4",  ScanCode.SC_F4);
+        KEY_MAP.put("F5",  ScanCode.SC_F5);  KEY_MAP.put("F6",  ScanCode.SC_F6);
+        KEY_MAP.put("F7",  ScanCode.SC_F7);  KEY_MAP.put("F8",  ScanCode.SC_F8);
+        KEY_MAP.put("F9",  ScanCode.SC_F9);  KEY_MAP.put("F10", ScanCode.SC_F10);
         KEY_MAP.put("F11", ScanCode.SC_F11); KEY_MAP.put("F12", ScanCode.SC_F12);
+
+        // Numpad — browser sends e.code (e.g. "Numpad7") directly
+        KEY_MAP.put("Numpad0", ScanCode.SC_NUMKEY0); KEY_MAP.put("Numpad1", ScanCode.SC_NUMKEY1);
+        KEY_MAP.put("Numpad2", ScanCode.SC_NUMKEY2); KEY_MAP.put("Numpad3", ScanCode.SC_NUMKEY3);
+        KEY_MAP.put("Numpad4", ScanCode.SC_NUMKEY4); KEY_MAP.put("Numpad5", ScanCode.SC_NUMKEY5);
+        KEY_MAP.put("Numpad6", ScanCode.SC_NUMKEY6); KEY_MAP.put("Numpad7", ScanCode.SC_NUMKEY7);
+        KEY_MAP.put("Numpad8", ScanCode.SC_NUMKEY8); KEY_MAP.put("Numpad9", ScanCode.SC_NUMKEY9);
+        KEY_MAP.put("NumpadEnter",    ScanCode.SC_NPENTER);
+        KEY_MAP.put("NumpadMultiply", ScanCode.SC_NPMULTIPLY);
+        KEY_MAP.put("NumpadSubtract", ScanCode.SC_NPMINUS);
+        KEY_MAP.put("NumpadAdd",      ScanCode.SC_NPPLUS);
+        KEY_MAP.put("NumpadDecimal",  ScanCode.SC_NPDOT);
+        KEY_MAP.put("NumpadDivide",   ScanCode.SC_NPSLASH);
+        KEY_MAP.put("NumpadEqual",    ScanCode.SC_NPEQUALS);
+        KEY_MAP.put("NumpadComma",    ScanCode.SC_NPCOMMA);
     }
 
     /** Start accepting connections on the given port. Non-blocking — runs in a daemon thread. */
@@ -190,16 +260,16 @@ public class GameWebSocketServer {
                 continue;
             }
             if (opcode == 1 || opcode == 2) {
-                postKeyEvent(new String(payload, StandardCharsets.UTF_8), doom);
+                postEvent(new String(payload, StandardCharsets.UTF_8), doom);
             }
         }
     }
 
     // -----------------------------------------------------------------------
-    //  Key event dispatch
+    //  Event dispatch (keyboard + mouse)
     // -----------------------------------------------------------------------
 
-    private static void postKeyEvent(String json, IDoom doom) {
+    private static void postEvent(String json, IDoom doom) {
         final String t = jsonString(json, "t");
         final String k = jsonString(json, "k");
         if (t == null || k == null) return;
