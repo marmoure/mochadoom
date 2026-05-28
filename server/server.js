@@ -25,12 +25,12 @@ const { spawn } = require('child_process');
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-const PORT         = process.env.PORT         || 8080;
+const PORT = process.env.PORT || 8080;
 const GAME_WS_PORT = process.env.GAME_WS_PORT || 3001;
-const SPAWN_GAME   = process.argv.includes('--spawn');
-const GAME_DIR     = path.resolve(__dirname, '..');
-const GAME_CMD     = 'java';
-const GAME_ARGS    = ['-jar', 'src/mochadoom.jar', '-websocket', String(GAME_WS_PORT), '-nosound', '-fps', '60'];
+const SPAWN_GAME = process.argv.includes('--spawn');
+const GAME_DIR = path.resolve(__dirname, '..');
+const GAME_CMD = 'java';
+const GAME_ARGS = ['-jar', 'target/mochadoom-1.0.0-SNAPSHOT.jar', '-websocket', String(GAME_WS_PORT), '-nosound', '-fps', '60'];
 
 // ---------------------------------------------------------------------------
 // HTTP server — serves index.html + assets

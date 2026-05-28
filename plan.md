@@ -1,4 +1,4 @@
-# Plan: Stream Doom → Node.js Server → Browser
+proj# Plan: Stream Doom → Node.js Server → Browser
 
 ## Context
 
