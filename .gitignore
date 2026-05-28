@@ -11,6 +11,10 @@ nbproject/
 
 node_modules/
 
+# maven
+target/
+
+
 # Intellij 
 *.iml
 .idea/

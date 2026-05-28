@@ -37,11 +37,17 @@ import i.StdoutFrameWriter;
 import i.WebSocketFrameWriter;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class Engine {
     private static volatile Engine instance;
+
+    private static final ReentrantLock PAUSE_LOCK    = new ReentrantLock();
+    private static final Condition     PAUSE_COND    = PAUSE_LOCK.newCondition();
+    private static volatile boolean    libraryPaused = false;
     
     /**
      * Mocha Doom engine entry point.
@@ -120,7 +126,7 @@ public class Engine {
     /** Non-null in -websocket mode; encodes frames as JPEG and broadcasts via wsServer. */
     private final WebSocketFrameWriter wsFrameWriter;
 
-    private final DoomMain<?, ?> DOOM;
+    final DoomMain<?, ?> DOOM;
     
     @SuppressWarnings("unchecked")
     private Engine(final String... argv) throws IOException {
@@ -219,6 +225,64 @@ public class Engine {
         }
     }
     
+    /**
+     * Returns the active {@link GameWebSocketServer}, or {@code null} if
+     * the engine was not started in WebSocket mode.
+     *
+     * @return the WebSocket server, or {@code null}
+     */
+    public static GameWebSocketServer getWebSocketServer() {
+        final Engine local = instance;
+        return local != null ? local.wsServer : null;
+    }
+
+    /**
+     * Sets the library-level pause state. When pausing, also halts audio and
+     * sets the in-game {@code paused} flag. On resume, reverses all three and
+     * unblocks the game loop thread.
+     *
+     * <p>Called from {@link MochaDoom#pause()} and {@link MochaDoom#resume()}.
+     *
+     * @param pause {@code true} to pause, {@code false} to resume
+     */
+    public static void setLibraryPaused(boolean pause) {
+        PAUSE_LOCK.lock();
+        try {
+            libraryPaused = pause;
+            final Engine eng = instance;
+            if (eng != null) {
+                eng.DOOM.paused = pause;
+                if (pause) {
+                    eng.DOOM.doomSound.PauseSound();
+                } else {
+                    eng.DOOM.doomSound.ResumeSound();
+                    PAUSE_COND.signalAll();
+                }
+            }
+        } finally {
+            PAUSE_LOCK.unlock();
+        }
+    }
+
+    /**
+     * Blocks the game-loop thread until the library-level pause is cleared.
+     * Returns immediately when not paused. Called once per iteration at the
+     * top of {@link doom.DoomMain#DoomLoop()}.
+     */
+    public static void awaitIfLibraryPaused() {
+        if (!libraryPaused) return; // fast path — no lock cost on every normal tick
+        PAUSE_LOCK.lock();
+        try {
+            while (libraryPaused) {
+                PAUSE_COND.await();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            PAUSE_LOCK.unlock();
+        }
+    }
+
     public static void updateFrame() {
         if (instance.wsFrameWriter != null) {
             instance.wsFrameWriter.writeFrame(instance.DOOM.graphicSystem);

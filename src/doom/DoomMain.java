@@ -422,6 +422,7 @@ public class DoomMain<T, V> extends DoomStatus<T, V> implements IDoomGameNetwork
         }
         
         while (true) {
+            Engine.awaitIfLibraryPaused();
             // frame syncronous IO operations
             I_StartFrame:;
 
