@@ -63,8 +63,11 @@ public class Loggers {
     
     public static Logger getLogger(final String className) {
         final Logger ret = Logger.getLogger(className);
-        ret.setParent(INDIVIDUAL_CLASS_LOGGERS.getOrDefault(className, DEFAULT_LOGGER));
-        
+        try {
+            ret.setParent(INDIVIDUAL_CLASS_LOGGERS.getOrDefault(className, DEFAULT_LOGGER));
+        } catch (final UnsupportedOperationException ignored) {
+            // Log4j JUL bridge (ApiLogger) does not support setParent(); logging hierarchy is managed by Log4j
+        }
         return ret;
     }
     
