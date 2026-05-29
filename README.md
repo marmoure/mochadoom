@@ -25,6 +25,10 @@ mvn package -DskipTests
 # produces target/mochadoom-1.0.0-SNAPSHOT.jar
 ```
 
+> **Embedding MochaDoom in another project?** See [LIBRARY.md](LIBRARY.md) for
+> dependency coordinates, the full API reference, wire protocol details, and
+> integration examples in Java, Node.js, and the browser.
+
 ---
 
 ## Java library API
