@@ -136,7 +136,14 @@ public class GameWebSocketServer {
     /** Send a JPEG frame to all connected WebSocket clients. Called from the game loop thread. */
     public void broadcast(byte[] jpeg) {
         for (Client c : clients) {
-            c.sendBinary(jpeg);
+            c.sendBinary((byte) 0x01, jpeg, jpeg.length);
+        }
+    }
+
+    /** Send a PCM audio chunk to all connected WebSocket clients. Called from the sound thread. */
+    public void broadcastAudio(byte[] pcm, int length) {
+        for (Client c : clients) {
+            c.sendBinary((byte) 0x02, pcm, length);
         }
     }
 
@@ -333,28 +340,37 @@ public class GameWebSocketServer {
             this.out    = out;
         }
 
-        /** Send a binary WebSocket frame. Thread-safe: synchronized on out. */
-        void sendBinary(byte[] payload) {
+        /**
+         * Send a typed binary WebSocket frame (RFC 6455 opcode 0x2).
+         * The on-wire payload is {@code [type, payload[0..length-1]]}.
+         * Thread-safe: synchronized on out.
+         *
+         * @param type    message type byte (0x01 = video, 0x02 = audio)
+         * @param payload data buffer
+         * @param length  number of bytes from payload to send
+         */
+        void sendBinary(byte type, byte[] payload, int length) {
+            final int wsLen = 1 + length; // type byte + payload
             try {
                 synchronized (out) {
-                    final int len = payload.length;
-                    if (len < 126) {
+                    if (wsLen < 126) {
                         out.write(0x82);
-                        out.write(len);
-                    } else if (len <= 65535) {
+                        out.write(wsLen);
+                    } else if (wsLen <= 65535) {
                         out.write(new byte[]{
                             (byte) 0x82, (byte) 0x7E,
-                            (byte) ((len >> 8) & 0xFF), (byte) (len & 0xFF)
+                            (byte) ((wsLen >> 8) & 0xFF), (byte) (wsLen & 0xFF)
                         });
                     } else {
                         out.write(new byte[]{
                             (byte) 0x82, (byte) 0x7F,
                             0, 0, 0, 0,
-                            (byte) ((len >> 24) & 0xFF), (byte) ((len >> 16) & 0xFF),
-                            (byte) ((len >>  8) & 0xFF), (byte) (len & 0xFF)
+                            (byte) ((wsLen >> 24) & 0xFF), (byte) ((wsLen >> 16) & 0xFF),
+                            (byte) ((wsLen >>  8) & 0xFF), (byte) (wsLen & 0xFF)
                         });
                     }
-                    out.write(payload);
+                    out.write(type);
+                    out.write(payload, 0, length);
                     out.flush();
                 }
             } catch (IOException e) {

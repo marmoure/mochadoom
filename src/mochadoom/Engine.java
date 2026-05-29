@@ -33,6 +33,7 @@ import i.FileFrameWriter;
 import i.GameWebSocketServer;
 import i.Strings;
 import i.StdinKeyReader;
+import i.StdoutAudioWriter;
 import i.StdoutFrameWriter;
 import i.WebSocketFrameWriter;
 import java.io.IOException;
@@ -126,6 +127,9 @@ public class Engine {
     /** Non-null in -websocket mode; encodes frames as JPEG and broadcasts via wsServer. */
     private final WebSocketFrameWriter wsFrameWriter;
 
+    /** Non-null in headless (-stdout) mode; writes PCM audio chunks to stdout. */
+    private final StdoutAudioWriter stdoutAudioWriter;
+
     final DoomMain<?, ?> DOOM;
     
     @SuppressWarnings("unchecked")
@@ -138,28 +142,40 @@ public class Engine {
         // reads default.cfg and mochadoom.cfg
         this.cm = new ConfigManager();
 
-        // initializes stuff
-        this.DOOM = new DoomMain<>();
-
         final boolean websocket = cvm.present(CommandVariable.WEBSOCKET);
         final boolean headless  = cvm.bool(CommandVariable.STDOUT);
 
+        // Audio-output sinks must be set BEFORE new DoomMain<>() because DoomMain's
+        // constructor calls ISoundDriver.InitSound(), which checks Engine.hasAudioOutput()
+        // to decide whether to open a hardware audio line.
+        if (websocket) {
+            this.wsServer          = new GameWebSocketServer();
+            this.stdoutAudioWriter = null;
+        } else if (headless) {
+            this.wsServer          = null;
+            this.stdoutAudioWriter = new StdoutAudioWriter(22050, 2, 16);
+        } else {
+            this.wsServer          = null;
+            this.stdoutAudioWriter = null;
+        }
+
+        // initializes stuff — sound driver InitSound() runs here
+        this.DOOM = new DoomMain<>();
+
         if (websocket) {
             // ---- WEBSOCKET MODE: no AWT window, frames sent as JPEG over WebSocket ----
-            this.headlessController = new HeadlessController();
-            this.windowController   = null;
-            this.stdoutWriter       = null;
-            this.fileWriter         = null;
-            this.demoKeyDriver      = null;
-            this.wsServer           = new GameWebSocketServer();
-            this.wsFrameWriter      = new WebSocketFrameWriter(wsServer);
+            this.headlessController  = new HeadlessController();
+            this.windowController    = null;
+            this.stdoutWriter        = null;
+            this.fileWriter          = null;
+            this.demoKeyDriver       = null;
+            this.wsFrameWriter       = new WebSocketFrameWriter(wsServer);
         } else if (headless) {
             // ---- HEADLESS MODE: no AWT window, output goes to stdout / file ----
-            this.headlessController = new HeadlessController();
-            this.windowController   = null;
-            this.stdoutWriter       = new StdoutFrameWriter();
-            this.wsServer           = null;
-            this.wsFrameWriter      = null;
+            this.headlessController  = new HeadlessController();
+            this.windowController    = null;
+            this.stdoutWriter        = new StdoutFrameWriter();
+            this.wsFrameWriter       = null;
 
             // -outfile <path>: append RGBA frames to a binary file (only when explicitly requested).
             if (cvm.present(CommandVariable.OUTFILE)) {
@@ -178,12 +194,11 @@ public class Engine {
             stdinThread.start();
         } else {
             // ---- NORMAL MODE: AWT canvas window ----
-            this.headlessController = null;
-            this.stdoutWriter       = null;
-            this.fileWriter         = null;
-            this.demoKeyDriver      = null;
-            this.wsServer           = null;
-            this.wsFrameWriter      = null;
+            this.headlessController  = null;
+            this.stdoutWriter        = null;
+            this.fileWriter          = null;
+            this.demoKeyDriver       = null;
+            this.wsFrameWriter       = null;
             this.windowController   = DoomWindow.createCanvasWindowController(
                 DOOM.graphicSystem::getScreenImage,
                 DOOM::PostEvent,
@@ -280,6 +295,34 @@ public class Engine {
             Thread.currentThread().interrupt();
         } finally {
             PAUSE_LOCK.unlock();
+        }
+    }
+
+    /**
+     * Returns {@code true} when audio is being streamed (stdout or WebSocket mode).
+     * The sound driver uses this to succeed even without a hardware audio device
+     * and to skip opening one when streaming.
+     */
+    public static boolean hasAudioOutput() {
+        final Engine local = instance;
+        return local != null && (local.stdoutAudioWriter != null || local.wsServer != null);
+    }
+
+    /**
+     * Delivers a mixed PCM chunk to all active audio outputs (stdout and/or WebSocket).
+     * Called from the sound driver's playback thread.
+     *
+     * @param pcm    buffer containing signed 16-bit big-endian stereo samples
+     * @param length number of valid bytes in {@code pcm}
+     */
+    public static void updateAudio(byte[] pcm, int length) {
+        final Engine local = instance;
+        if (local == null) return;
+        if (local.stdoutAudioWriter != null) {
+            local.stdoutAudioWriter.writeChunk(pcm, length);
+        }
+        if (local.wsServer != null) {
+            local.wsServer.broadcastAudio(pcm, length);
         }
     }
 

@@ -2,7 +2,10 @@
  * StdoutFrameWriter
  *
  * Converts the current game screen (BufferedImage) to raw RGBA bytes and
- * writes framed packets to stdout. Wire format per frame:
+ * writes framed packets to stdout via StdoutSink (which serialises writes
+ * with the audio thread to prevent packet interleaving).
+ *
+ * Wire format per frame:
  *
  *   [4 bytes]  magic: 0x44 0x4F 0x4F 0x4D  ("DOOM")
  *   [4 bytes]  frame number   (little-endian int32)
@@ -16,10 +19,6 @@
 package i;
 
 import java.awt.image.BufferedImage;
-import java.io.BufferedOutputStream;
-import java.io.DataOutputStream;
-import java.io.FileDescriptor;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -35,17 +34,13 @@ public class StdoutFrameWriter {
     private static final byte[] MAGIC = { 0x44, 0x4F, 0x4F, 0x4D }; // "DOOM"
     private static final Logger LOGGER = Logger.getLogger(StdoutFrameWriter.class.getName());
 
-    /** Buffered wrapper around System.out — never close this. */
-    private final DataOutputStream out;
-
     private int frameNumber = 0;
 
+    /** Reused packet buffer; grown lazily to fit the largest frame seen. */
+    private byte[] packetBuf;
+
     public StdoutFrameWriter() throws IOException {
-        // FileDescriptor.out is the real fd 1 (stdout), unaffected by
-        // System.setOut() which only redirects the Java PrintStream wrapper.
-        this.out = new DataOutputStream(
-            new BufferedOutputStream(new FileOutputStream(FileDescriptor.out), 256 * 1024)
-        );
+        // StdoutSink opens FileDescriptor.out; nothing else needed here.
     }
 
     /**
@@ -65,61 +60,53 @@ public class StdoutFrameWriter {
             final int h = graphicSystem.getScreenHeight();
 
             // Obtain pixel data as ARGB ints (Java's native packed format).
-            // For BufferedImage (all our renderers produce one) getRGB() does
-            // the correct palette-to-RGB translation automatically.
             final int[] argb;
             if (img instanceof BufferedImage) {
                 argb = ((BufferedImage) img).getRGB(0, 0, w, h, null, 0, w);
             } else {
-                // Fallback: draw into a fresh BufferedImage
                 final BufferedImage tmp = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
                 tmp.getGraphics().drawImage(img, 0, 0, null);
                 argb = tmp.getRGB(0, 0, w, h, null, 0, w);
             }
 
-            // Convert ARGB → RGBA byte array
-            final byte[] rgba = argbToRgba(argb);
+            // Header is 16 bytes; pixel payload is w*h*4 bytes.
+            final int packetSize = 16 + argb.length * 4;
+            if (packetBuf == null || packetBuf.length < packetSize) {
+                packetBuf = new byte[packetSize];
+            }
 
-            // --- write packet ---
-            out.write(MAGIC);                      // 4-byte magic
-            writeInt32LE(out, frameNumber++);       // frame number
-            writeInt32LE(out, w);                   // width
-            writeInt32LE(out, h);                   // height
-            out.write(rgba);                        // pixels
-            out.flush();
+            // Write header into packet buffer.
+            int off = 0;
+            packetBuf[off++] = MAGIC[0];
+            packetBuf[off++] = MAGIC[1];
+            packetBuf[off++] = MAGIC[2];
+            packetBuf[off++] = MAGIC[3];
+            off = writeInt32LE(packetBuf, off, frameNumber++);
+            off = writeInt32LE(packetBuf, off, w);
+            off = writeInt32LE(packetBuf, off, h);
+
+            // Convert ARGB int[] → RGBA byte[] directly into packet buffer.
+            for (int pixel : argb) {
+                packetBuf[off++] = (byte) ((pixel >> 16) & 0xFF); // R
+                packetBuf[off++] = (byte) ((pixel >>  8) & 0xFF); // G
+                packetBuf[off++] = (byte) ( pixel        & 0xFF); // B
+                packetBuf[off++] = (byte) ((pixel >> 24) & 0xFF); // A
+            }
+
+            StdoutSink.get().writePacket(packetBuf, packetSize);
 
         } catch (IOException e) {
-            // Broken pipe (consumer closed): log once and exit gracefully
             LOGGER.log(Level.SEVERE, "stdout pipe broken, shutting down", e);
             System.exit(0);
         }
     }
 
-    // -----------------------------------------------------------------------
-    //  Helpers
-    // -----------------------------------------------------------------------
-
-    /**
-     * Repack Java's 0xAARRGGBB int[] into an R,G,B,A byte[] expected by
-     * the browser's ImageData / WebGL texImage2D.
-     */
-    private static byte[] argbToRgba(int[] argb) {
-        final byte[] rgba = new byte[argb.length * 4];
-        int dst = 0;
-        for (int pixel : argb) {
-            rgba[dst++] = (byte) ((pixel >> 16) & 0xFF); // R
-            rgba[dst++] = (byte) ((pixel >>  8) & 0xFF); // G
-            rgba[dst++] = (byte) ( pixel        & 0xFF); // B
-            rgba[dst++] = (byte) ((pixel >> 24) & 0xFF); // A
-        }
-        return rgba;
-    }
-
-    /** Write a 32-bit integer in little-endian byte order. */
-    private static void writeInt32LE(DataOutputStream dos, int v) throws IOException {
-        dos.write( v        & 0xFF);
-        dos.write((v >>  8) & 0xFF);
-        dos.write((v >> 16) & 0xFF);
-        dos.write((v >> 24) & 0xFF);
+    /** Write a 32-bit integer in little-endian byte order into buf at off; returns new off. */
+    private static int writeInt32LE(byte[] buf, int off, int v) {
+        buf[off++] = (byte)  (v         & 0xFF);
+        buf[off++] = (byte) ((v >>  8)  & 0xFF);
+        buf[off++] = (byte) ((v >> 16)  & 0xFF);
+        buf[off++] = (byte) ((v >> 24)  & 0xFF);
+        return off;
     }
 }

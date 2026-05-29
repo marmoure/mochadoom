@@ -3,6 +3,7 @@ package s;
 import static data.sounds.S_sfx;
 import data.sounds.sfxenum_t;
 import doom.DoomMain;
+import mochadoom.Engine;
 import java.util.HashMap;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -144,22 +145,26 @@ public class SuperDoomSoundDriver extends AbstractSoundDriver {
 
         DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
 
-        if (AudioSystem.isLineSupported(info))
-            try {
-                line = (SourceDataLine) AudioSystem.getSourceDataLine(format);
-                line.open(format, AUDIOLINE_BUFFER);
-            }	catch (Exception e) {
-                e.printStackTrace();
-                System.err.print("Could not play signed 16 data\n");
+        if (Engine.hasAudioOutput()) {
+            System.err.print("streaming mode — hardware audio device skipped\n");
+        } else {
+            if (AudioSystem.isLineSupported(info))
+                try {
+                    line = (SourceDataLine) AudioSystem.getSourceDataLine(format);
+                    line.open(format, AUDIOLINE_BUFFER);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    System.err.print("Could not play signed 16 data\n");
+                    return false;
+                }
+
+            if (line != null) {
+                System.err.print("configured audio device\n");
+                line.start();
+            } else {
+                System.err.print("could not configure audio device\n");
                 return false;
             }
-
-        if (line != null) {
-            System.err.print("configured audio device\n");
-            line.start();
-        } else {
-        	 System.err.print("could not configure audio device\n");
-        	 return false;
         }
 
         SOUNDSRV = new PlaybackServer(line);
@@ -343,9 +348,9 @@ public class SuperDoomSoundDriver extends AbstractSoundDriver {
             } while (!done);
         
         
-        this.line.flush();
-        
-        
+        if (this.line != null) this.line.flush();
+
+
         SOUNDSRV.terminate = true;
         MIXSRV.terminate = true;
         produce.release();
@@ -357,7 +362,7 @@ public class SuperDoomSoundDriver extends AbstractSoundDriver {
         	// Well, I don't care.
         }
         System.err.printf("3\n");
-        line.close();
+        if (line != null) line.close();
         System.err.printf("4\n");
 
     }
@@ -417,7 +422,10 @@ public class SuperDoomSoundDriver extends AbstractSoundDriver {
                         // Should not block
                     }
                     // Play back all chunks present in a buffer ASAP
-                    auline.write(chunk.buffer, 0, MIXBUFFERSIZE);
+                    if (auline != null) {
+                        auline.write(chunk.buffer, 0, MIXBUFFERSIZE);
+                    }
+                    Engine.updateAudio(chunk.buffer, MIXBUFFERSIZE);
                     chunks++;
                     // No matter what, give the chunk back!
                     chunk.free = true;
@@ -743,8 +751,8 @@ public class SuperDoomSoundDriver extends AbstractSoundDriver {
     	        } else {
     	            silence++;
     	            // MAES: attempt to fix lingering noise error
-    	            if (silence >ISoundDriver.BUFFER_CHUNKS){
-    	                line.flush();
+    	            if (silence > ISoundDriver.BUFFER_CHUNKS){
+    	                if (line != null) line.flush();
     	                silence=0;
     	                }
     	        }
