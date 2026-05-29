@@ -140,10 +140,17 @@ public class GameWebSocketServer {
         }
     }
 
-    /** Send a PCM audio chunk to all connected WebSocket clients. Called from the sound thread. */
+    /** Send a PCM SFX chunk to all connected WebSocket clients (type 0x02). */
     public void broadcastAudio(byte[] pcm, int length) {
         for (Client c : clients) {
             c.sendBinary((byte) 0x02, pcm, length);
+        }
+    }
+
+    /** Send a PCM music chunk to all connected WebSocket clients (type 0x03). */
+    public void broadcastMusic(byte[] pcm, int length) {
+        for (Client c : clients) {
+            c.sendBinary((byte) 0x03, pcm, length);
         }
     }
 

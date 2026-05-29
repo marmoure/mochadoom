@@ -319,7 +319,8 @@ const reconnectBtn = document.getElementById('reconnect-btn');
 
 // ── Message type bytes (must match Java GameWebSocketServer) ────────────
 const TYPE_VIDEO = 0x01;
-const TYPE_AUDIO = 0x02;
+const TYPE_AUDIO = 0x02; // SFX
+const TYPE_MUSIC = 0x03; // music (separate timeline to avoid interleaving gaps)
 
 // ── State ───────────────────────────────────────────────────────────────
 let frameCount  = 0;
@@ -374,8 +375,7 @@ function formatBytes(b) {
 const DOOM_SAMPLE_RATE = 22050;
 const AUDIO_LOOKAHEAD  = 0.15;  // seconds to buffer ahead (prevents gaps)
 
-let audioCtx      = null;
-let nextAudioTime = 0;
+let audioCtx = null;
 
 function ensureAudioCtx() {
   if (!audioCtx) {
@@ -388,36 +388,50 @@ function resumeAudioCtx() {
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
 }
 
-// msg: ArrayBuffer — byte 0 is the type byte (0x02), rest is raw PCM
-function playAudio(msg) {
-  ensureAudioCtx();
-
-  // Read PCM directly from the ArrayBuffer starting at byte 1 (skip type byte).
-  // Format: stereo 16-bit big-endian → 4 bytes per sample frame.
-  const pcmBytes   = msg.byteLength - 1;
+// Decode a typed binary WebSocket message (byte 0 = type, rest = raw PCM) into
+// an AudioBuffer and schedule it at the given nextTime ref, returning the new
+// nextTime so callers can advance their own timeline without sharing state.
+function decodePcm(msg) {
+  const pcmBytes    = msg.byteLength - 1;
   const sampleCount = Math.floor(pcmBytes / 4);
-  if (sampleCount === 0) return;
-
+  if (sampleCount === 0) return null;
   const view   = new DataView(msg, 1);
   const buffer = audioCtx.createBuffer(2, sampleCount, DOOM_SAMPLE_RATE);
   const left   = buffer.getChannelData(0);
   const right  = buffer.getChannelData(1);
-
   for (let i = 0; i < sampleCount; i++) {
-    left[i]  = view.getInt16(i * 4,     false) / 32768; // false = big-endian
+    left[i]  = view.getInt16(i * 4,     false) / 32768; // big-endian
     right[i] = view.getInt16(i * 4 + 2, false) / 32768;
   }
+  return buffer;
+}
 
+function scheduleBuffer(buffer, nextTimeRef) {
   const source = audioCtx.createBufferSource();
   source.buffer = buffer;
   source.connect(audioCtx.destination);
-
-  // Keep the playhead a fixed lookahead ahead of real time.
-  // If we've fallen behind (e.g. tab was hidden), resync.
   const now = audioCtx.currentTime;
-  if (nextAudioTime < now + 0.01) nextAudioTime = now + AUDIO_LOOKAHEAD;
-  source.start(nextAudioTime);
-  nextAudioTime += buffer.duration;
+  if (nextTimeRef.t < now + 0.01) nextTimeRef.t = now + AUDIO_LOOKAHEAD;
+  source.start(nextTimeRef.t);
+  nextTimeRef.t += buffer.duration;
+}
+
+// Mutable time-cursor objects so scheduleBuffer can advance each independently.
+const sfxTime   = { t: 0 };
+const musicTime = { t: 0 };
+
+// msg: ArrayBuffer — byte 0 is the type byte (0x02), rest is raw PCM (SFX)
+function playAudio(msg) {
+  ensureAudioCtx();
+  const buf = decodePcm(msg);
+  if (buf) scheduleBuffer(buf, sfxTime);
+}
+
+// msg: ArrayBuffer — byte 0 is the type byte (0x03), rest is raw PCM (music)
+function playMusic(msg) {
+  ensureAudioCtx();
+  const buf = decodePcm(msg);
+  if (buf) scheduleBuffer(buf, musicTime);
 }
 
 // Browsers require a user gesture before AudioContext can play.
@@ -459,6 +473,8 @@ function connect() {
       await renderVideo(evt.data);
     } else if (type === TYPE_AUDIO) {
       playAudio(evt.data);
+    } else if (type === TYPE_MUSIC) {
+      playMusic(evt.data);
     }
   });
 

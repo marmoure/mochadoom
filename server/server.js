@@ -30,7 +30,14 @@ const GAME_WS_PORT = process.env.GAME_WS_PORT || 3001;
 const SPAWN_GAME = process.argv.includes('--spawn');
 const GAME_DIR = path.resolve(__dirname, '..');
 const GAME_CMD = 'java';
-const GAME_ARGS = ['-jar', 'target/mochadoom-1.0.0-SNAPSHOT.jar', '-websocket', String(GAME_WS_PORT), '-fps', '60'];
+const GAME_ARGS = [
+    // Allow reflection into Gervill (the Java soft synth) so StreamingMusicModule
+    // can open the synthesizer in PCM-pull mode and stream music to the browser.
+    '--add-opens', 'java.desktop/com.sun.media.sound=ALL-UNNAMED',
+    '-jar', 'target/mochadoom-1.0.0-SNAPSHOT.jar',
+    '-websocket', String(GAME_WS_PORT),
+    '-fps', '60',
+];
 
 // ---------------------------------------------------------------------------
 // HTTP server — serves index.html + assets

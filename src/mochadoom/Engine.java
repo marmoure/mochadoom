@@ -326,6 +326,22 @@ public class Engine {
         }
     }
 
+    /**
+     * Delivers a mixed PCM music chunk to the WebSocket audio stream (type 0x03).
+     * Kept separate from {@link #updateAudio} so the browser can schedule music
+     * and SFX on independent timelines and avoid interleaving gaps.
+     *
+     * @param pcm    buffer containing signed 16-bit big-endian stereo samples
+     * @param length number of valid bytes in {@code pcm}
+     */
+    public static void updateMusic(byte[] pcm, int length) {
+        final Engine local = instance;
+        if (local == null) return;
+        if (local.wsServer != null) {
+            local.wsServer.broadcastMusic(pcm, length);
+        }
+    }
+
     public static void updateFrame() {
         if (instance.wsFrameWriter != null) {
             instance.wsFrameWriter.writeFrame(instance.DOOM.graphicSystem);
