@@ -1,223 +1,333 @@
-# Mocha Doom
+# MochaDoom — Java Doom Library
 
-![Top Language](https://img.shields.io/github/languages/top/axdoomer/mochadoom.svg?style=flat)
-![Code Size](https://img.shields.io/github/languages/code-size/axdoomer/mochadoom.svg?style=flat)
-![License](https://img.shields.io/github/license/axdoomer/mochadoom.svg?style=flat&logo=gnu)
-
-Mocha Doom is a pure Java Doom source port. Most of the hard work of porting Doom to Java has already been done, thanks to Velktron (Maes), but he has stopped working on it in 2013. Although the port is almost complete, some work remains to do, most importantly the network code for the multiplayer is missing. Features like support for the Boom format would also be great. I have decided to continue the development in my free time and fix some bugs.
-
-# How to run
-
-1. Open the project with Eclipse or NetBeans
-2. Delete every file that has errors (if any)
-3. Build and run the project
-
-## Advanced users
-
-On Linux, two different scripts can be used.
-
-1. `build-and-run.sh` which will build Mocha Doom and run it. You can use it as such: `./build-and-run.sh -iwad ~/DOOM2.WAD`. This is the preferred way to quickly test changes for developers.
-2. `build-jar.sh` which will build a JAR file. You can then run the JAR file as such: `java -jar mochadoom.jar -iwad ~/DOOM2.WAD`. This is the preferred way for distributing a Mocha Doom executable.
-
-# License
-
-Mocha Doom contains work from many contributors. Here are the main contributors, but it's no limited to this list. Others are listed in the copyright headers of the files where they own copyright.
-
-- Copyright (C) 1993-1996  [id Software, Inc.](http://www.idsoftware.com/)
-- Copyright (C) 2010-2013  [Victor Epitropou](https://sourceforge.net/projects/mochadoom/)
-- Copyright (C) 2016-2017  [Alexandre-Xavier Labonté-Lamoureux](https://github.com/AXDOOMER/)
-- Copyright (C) 2017  [Good Sign](https://github.com/GoodSign2017)
-
-Mocha Doom is distributed under the [GNU GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html).
-
-# Rip and Tear!
-
-Mocha Doom in action:
-![so_much_blood](https://cloud.githubusercontent.com/assets/6194072/18658610/94a326c2-7ed2-11e6-98af-4ed4c8b28510.png)
+A pure-Java Doom engine that can be embedded as a library or run standalone.
+Supports three output modes: a local AWT window, WebSocket streaming to a
+browser, and a raw binary stdout pipe for custom consumers.
 
 ---
 
-# Headless stdout Rendering Mode
+## Modes at a glance
 
-Mocha Doom can run without a window and stream every rendered frame as raw
-RGBA bytes to **stdout**. This makes it easy to pipe the output to a browser
-canvas, a video encoder, or any other consumer.
-
-## Prerequisites
-
-- Java 8 or newer on your `PATH`
-- A valid IWAD file (e.g. `doom1.wad`)
-- The project compiled into `classes/` (see *Advanced users* above)
+| Mode | Video | Audio | Input |
+|------|-------|-------|-------|
+| **Desktop** (default) | AWT window | System speakers | Keyboard/mouse on window |
+| **WebSocket** (`-websocket`) | Browser `<canvas>` via JPEG | Browser Web Audio API | Browser keyboard → WebSocket |
+| **Stdout** (`-stdout`) | Raw RGBA frames on stdout | Raw PCM on stdout | stdin JSON key events |
 
 ---
 
-## Step 1 — Compile
+## Build
+
+Requires Java 8+ and Maven.
 
 ```bash
-# Linux / macOS
-./build-and-run.sh   # or build-jar.sh / your IDE
-
-# Windows (PowerShell) — compile changed sources
-javac -sourcepath src -d classes `
-  src/mochadoom/Engine.java `
-  src/i/StdoutFrameWriter.java `
-  src/awt/HeadlessController.java `
-  src/doom/CommandVariable.java
+mvn package -DskipTests
+# produces target/mochadoom-1.0.0-SNAPSHOT.jar
 ```
 
 ---
 
-## Step 2 — Run in headless mode
+## Java library API
 
-Add the `-stdout` flag. Because there is no window, you also need a source of
-input — the built-in demo files work perfectly:
+Add the JAR to your classpath, then use the `mochadoom` package:
+
+```java
+import mochadoom.DoomConfig;
+import mochadoom.MochaDoom;
+
+DoomConfig config = DoomConfig.builder()
+    .iwad("/path/to/doom.wad")
+    .webSocketPort(8080)       // omit for desktop mode
+    .build();
+
+MochaDoom doom = new MochaDoom(config);
+doom.start();    // non-blocking — game runs in a background daemon thread
+
+// later...
+doom.pause();
+doom.resume();
+doom.stop();
+```
+
+### `DoomConfig` builder options
+
+| Method | Default | Description |
+|--------|---------|-------------|
+| `.iwad(String path)` | auto-discover | Path to the IWAD file (`doom.wad`, `doom2.wad`, …) |
+| `.webSocketPort(int port)` | disabled | Start WebSocket server on this port; implies headless mode |
+| `.headless(boolean)` | `false` | Run without an AWT window (stdout mode) |
+| `.noSound(boolean)` | `false` | Disable all audio (SFX + music) |
+| `.noMusic(boolean)` | `false` | Disable music only; SFX still play |
+| `.extraArgs(String... args)` | — | Raw engine flags not yet exposed by the builder |
+
+### `MochaDoom` methods
+
+| Method | Description |
+|--------|-------------|
+| `start()` | Initialise engine synchronously, then run game loop in a daemon thread |
+| `pause()` | Halt game ticks, sound, and rendering (thread blocks until `resume()`) |
+| `resume()` | Unblock the game loop after a `pause()` |
+| `stop()` | Interrupt the game loop thread (best-effort shutdown) |
+| `isRunning()` | `true` if game thread is alive |
+| `isPaused()` | `true` if currently paused via `pause()` |
+| `getGameThread()` | The background thread — call `join()` to wait for exit |
+
+---
+
+## WebSocket streaming mode
+
+In this mode the game runs headless on a server. Video frames (JPEG) and audio
+chunks (PCM) are sent as tagged binary WebSocket messages to all connected
+browsers. No sound plays on the server.
+
+### Quick start with the bundled Node.js relay
+
+The `server/` directory contains a ready-to-use relay that sits between the
+Java WebSocket server and browser clients, serving `index.html` over HTTP.
 
 ```bash
-# Linux / macOS — stream frames into a file
-java -cp classes mochadoom.Engine -stdout -timedemo demo1 > frames.bin
+# Install dependencies (once)
+cd server && npm install
 
-# Windows (PowerShell)
-java -cp classes mochadoom.Engine -stdout -timedemo demo1 | Set-Content -Encoding Byte frames.bin
+# Spawn Java + start relay (recommended)
+node server.js --spawn
+
+# Or connect to an already-running Java process
+node server.js
+# then in a separate terminal:
+java -jar target/mochadoom-1.0.0-SNAPSHOT.jar -websocket 3001
 ```
 
-Other useful flags that work alongside `-stdout`:
+Open `http://localhost:8080` in a browser. Video and audio start immediately
+after the first keypress (required by browser autoplay policy).
 
-| Flag | Effect |
-|------|--------|
-| `-warp 1 1` | Jump straight into E1M1 |
-| `-timedemo demo1` | Play back the built-in demo as fast as possible |
-| `-fastdemo demo1` | Play back demo at full speed (no rate limiting) |
-| `-skill 4` | Set difficulty (1–5) |
-| `-nosound` | Disable audio (saves CPU in headless mode) |
-| `-indexed` | Use 8-bit indexed renderer (fastest) |
+Environment variables:
 
----
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `8080` | HTTP + browser WebSocket port |
+| `GAME_WS_PORT` | `3001` | Port where Java's WebSocket server listens |
 
-## Step 3 — Wire format
+### WebSocket binary protocol
 
-Each frame is written as a self-framed binary packet:
+All binary frames from the game carry a 1-byte type prefix:
+
+| Byte 0 | Payload | Description |
+|--------|---------|-------------|
+| `0x01` | JPEG bytes | Video frame |
+| `0x02` | Raw PCM bytes | Audio chunk |
+
+#### Video frame (`0x01`)
+
+The payload is a JPEG-encoded screenshot. The browser decodes it with
+`createImageBitmap` and draws it onto a `<canvas>`.
+
+#### Audio chunk (`0x02`)
+
+The payload is raw PCM:
 
 ```
-Offset  Size   Description
-──────  ─────  ──────────────────────────────────────────────────
-0       4      Magic: ASCII "DOOM" (0x44 0x4F 0x4F 0x4D)
-4       4      Frame number (little-endian int32, starts at 0)
-8       4      Width  in pixels (little-endian int32, typically 320)
-12      4      Height in pixels (little-endian int32, typically 200)
-16      W×H×4  Pixel data: R G B A per pixel, row-major, top-down
+Format:   signed 16-bit, big-endian, stereo interleaved
+Rate:     22050 Hz
+Channels: 2 (left, right)
+Chunk:    ~1050 sample frames = ~4200 bytes = ~47.6 ms of audio
 ```
 
-Total packet size for the default 320×200 resolution:  
-`16 + 320 × 200 × 4 = 256,016 bytes`
+The browser decodes it with the Web Audio API:
 
----
+```js
+const view  = new DataView(msg, 1);           // skip type byte
+const count = Math.floor((msg.byteLength - 1) / 4);
+const buf   = audioCtx.createBuffer(2, count, 22050);
+const L = buf.getChannelData(0);
+const R = buf.getChannelData(1);
+for (let i = 0; i < count; i++) {
+    L[i] = view.getInt16(i * 4,     false) / 32768; // big-endian
+    R[i] = view.getInt16(i * 4 + 2, false) / 32768;
+}
+const src = audioCtx.createBufferSource();
+src.buffer = buf;
+src.connect(audioCtx.destination);
+src.start(nextAudioTime);
+nextAudioTime += buf.duration;
+```
 
-## Step 4 — Render on a browser `<canvas>`
+### Implementing your own browser client
 
-Save the snippet below as **`player.html`** and open it in any modern browser.
-It connects to the Node.js relay from Step 5 over a WebSocket.
+Minimum viable browser client for WebSocket mode:
 
 ```html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Doom Canvas Player</title>
-  <style>
-    body { background: #000; display: flex; justify-content: center;
-           align-items: center; height: 100vh; margin: 0; }
-    canvas { image-rendering: pixelated; width: 640px; height: 400px; }
-  </style>
-</head>
-<body>
-  <canvas id="screen" width="320" height="200"></canvas>
-  <script>
-    const canvas = document.getElementById('screen');
-    const ctx    = canvas.getContext('2d');
-    const ws     = new WebSocket('ws://localhost:8080');
-    ws.binaryType = 'arraybuffer';
+<canvas id="screen"></canvas>
+<script>
+const canvas = document.getElementById('screen');
+const ctx    = canvas.getContext('2d');
 
-    ws.onmessage = ({ data }) => {
-      const view   = new DataView(data);
-      const w      = view.getInt32(8,  true); // little-endian
-      const h      = view.getInt32(12, true);
-      const pixels = new Uint8ClampedArray(data, 16, w * h * 4);
-      ctx.putImageData(new ImageData(pixels, w, h), 0, 0);
-    };
-  </script>
-</body>
-</html>
+const audioCtx = new AudioContext({ sampleRate: 22050 });
+let nextAudioTime = 0;
+const LOOKAHEAD = 0.15; // seconds
+
+// Unlock AudioContext on first user gesture (browser autoplay policy)
+window.addEventListener('keydown', () => audioCtx.resume(), { once: true });
+
+const ws = new WebSocket('ws://localhost:8080');
+ws.binaryType = 'arraybuffer';
+
+ws.onmessage = async ({ data }) => {
+    const type = new Uint8Array(data, 0, 1)[0];
+
+    if (type === 0x01) {
+        // Video: JPEG payload starting at byte 1
+        const bitmap = await createImageBitmap(
+            new Blob([new Uint8Array(data, 1)], { type: 'image/jpeg' })
+        );
+        canvas.width  = bitmap.width;
+        canvas.height = bitmap.height;
+        ctx.drawImage(bitmap, 0, 0);
+    } else if (type === 0x02) {
+        // Audio: raw PCM starting at byte 1
+        const view  = new DataView(data, 1);
+        const count = Math.floor((data.byteLength - 1) / 4);
+        const buf   = audioCtx.createBuffer(2, count, 22050);
+        const L = buf.getChannelData(0);
+        const R = buf.getChannelData(1);
+        for (let i = 0; i < count; i++) {
+            L[i] = view.getInt16(i * 4,     false) / 32768;
+            R[i] = view.getInt16(i * 4 + 2, false) / 32768;
+        }
+        const src = audioCtx.createBufferSource();
+        src.buffer = buf;
+        src.connect(audioCtx.destination);
+        const now = audioCtx.currentTime;
+        if (nextAudioTime < now + 0.01) nextAudioTime = now + LOOKAHEAD;
+        src.start(nextAudioTime);
+        nextAudioTime += buf.duration;
+    }
+};
+
+// Send keyboard events to the game
+function sendKey(t, k) { ws.send(JSON.stringify({ t, k })); }
+window.addEventListener('keydown', e => { if (!e.repeat) sendKey('d', e.code); });
+window.addEventListener('keyup',   e => sendKey('u', e.code));
+</script>
 ```
 
 ---
 
-## Step 5 — Node.js WebSocket relay
+## Stdout streaming mode
 
-This relay reads the binary stream from stdin and forwards each complete frame
-packet to every connected browser.
+In this mode the game outputs video and audio as a multiplexed binary stream on
+stdout. Useful for piping into video encoders or custom relay servers.
 
-**Install once:**
+### Running
+
 ```bash
-npm install ws
+java -jar target/mochadoom-1.0.0-SNAPSHOT.jar -stdout -iwad doom.wad
 ```
 
-**`relay.js`:**
+stdout is redirected to stderr internally so Java log output does not
+contaminate the stream.
+
+### Video packets (`DOOM`)
+
+```
+Offset   Size    Description
+──────   ─────   ──────────────────────────────────────
+0        4       Magic: 0x44 0x4F 0x4F 0x4D  ("DOOM")
+4        4       Frame number  (little-endian uint32)
+8        4       Width  in px  (little-endian uint32, typically 320)
+12       4       Height in px  (little-endian uint32, typically 200)
+16       W×H×4   Pixels: R G B A per pixel, row-major, top-down
+```
+
+### Audio packets (`DOOA`)
+
+```
+Offset   Size    Description
+──────   ─────   ──────────────────────────────────────
+0        4       Magic: 0x44 0x4F 0x4F 0x41  ("DOOA")
+4        4       Chunk number   (little-endian uint32)
+8        4       Sample rate    (little-endian uint32) — 22050
+12       4       Channel count  (little-endian uint32) — 2
+16       4       Bits per sample (little-endian uint32) — 16
+20       4       Byte count N   (little-endian uint32)
+24       N       PCM: signed 16-bit big-endian stereo interleaved
+```
+
+Video and audio packets are interleaved on stdout. A consumer must parse by
+magic prefix and handle both packet types. Packets are written atomically (no
+interleaving mid-packet).
+
+### Minimal Node.js stdout relay
+
 ```js
+'use strict';
 const { WebSocketServer } = require('ws');
 const wss = new WebSocketServer({ port: 8080 });
-
-const HEADER = 16;          // magic(4) + frameNo(4) + w(4) + h(4)
-const MAGIC  = 0x444F4F4D;  // "DOOM"
-
-let clients = new Set();
+const clients = new Set();
 wss.on('connection', ws => {
-  clients.add(ws);
-  ws.on('close', () => clients.delete(ws));
-  console.log('Browser connected');
+    clients.add(ws);
+    ws.on('close', () => clients.delete(ws));
 });
 
+const DOOM_MAGIC = 0x444F4F4D; // "DOOM"
+const DOOA_MAGIC = 0x444F4F41; // "DOOA"
 let buf = Buffer.alloc(0);
 
 process.stdin.on('data', chunk => {
-  buf = Buffer.concat([buf, chunk]);
-
-  while (buf.length >= HEADER) {
-    // Re-sync if magic is missing
-    if (buf.readUInt32BE(0) !== MAGIC) { buf = buf.slice(1); continue; }
-
-    const w     = buf.readInt32LE(8);
-    const h     = buf.readInt32LE(12);
-    const total = HEADER + w * h * 4;
-    if (buf.length < total) break;            // wait for full frame
-
-    const frame = buf.slice(0, total);
-    clients.forEach(ws => ws.readyState === 1 && ws.send(frame));
-    buf = buf.slice(total);
-  }
+    buf = Buffer.concat([buf, chunk]);
+    while (buf.length >= 8) {
+        const magic = buf.readUInt32BE(0);
+        if (magic === DOOM_MAGIC) {
+            // Video packet: 16-byte header + W*H*4 pixels
+            if (buf.length < 16) break;
+            const w = buf.readUInt32LE(8), h = buf.readUInt32LE(12);
+            const total = 16 + w * h * 4;
+            if (buf.length < total) break;
+            const frame = buf.slice(0, total);
+            clients.forEach(ws => ws.readyState === 1 && ws.send(frame));
+            buf = buf.slice(total);
+        } else if (magic === DOOA_MAGIC) {
+            // Audio packet: 24-byte header + N bytes PCM
+            if (buf.length < 24) break;
+            const n = buf.readUInt32LE(20);
+            const total = 24 + n;
+            if (buf.length < total) break;
+            const chunk = buf.slice(0, total);
+            clients.forEach(ws => ws.readyState === 1 && ws.send(chunk));
+            buf = buf.slice(total);
+        } else {
+            buf = buf.slice(1); // re-sync
+        }
+    }
 });
-
-console.log('Relay listening on ws://localhost:8080 — open player.html');
-```
-
-**Run everything together:**
-```bash
-# One command: game → relay; then open player.html in your browser
-java -cp classes mochadoom.Engine -stdout -nosound -timedemo demo1 | node relay.js
 ```
 
 ---
 
-## Quick sanity check
+## Command-line flags reference
 
-Confirm the stream is correct by dumping the first 16 bytes of the header:
+Flags can also be passed via `DoomConfig.builder().extraArgs(...)`.
 
-```bash
-# Linux / macOS
-java -cp classes mochadoom.Engine -stdout -nosound -timedemo demo1 \
-  | head -c 16 | xxd
+| Flag | Description |
+|------|-------------|
+| `-iwad <path>` | IWAD file to load |
+| `-websocket <port>` | Enable WebSocket server on given port |
+| `-stdout` | Enable raw stdout streaming |
+| `-nosound` | Disable all audio |
+| `-nomusic` | Disable music; SFX still play |
+| `-nosfx` | Disable SFX; music still plays |
+| `-warp <e> <m>` | Warp to episode/map on start |
+| `-skill <1-5>` | Set difficulty |
+| `-timedemo <demo>` | Play back a demo (no rate limiting) |
 
-# Expected output:
-# 00000000: 444f 4f4d 0000 0000 4001 0000 c800 0000  DOOM....@.......
-#            ^magic^  ^frame0^  ^320 LE^  ^200 LE^
-```
+---
 
+## License
+
+Mocha Doom is distributed under the [GNU GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html).
+
+Original authors:
+- id Software, Inc. (1993–1996)
+- Victor Epitropou / velktron (2010–2013)
+- Alexandre-Xavier Labonté-Lamoureux (2016–2017)
+- Good Sign (2017)
