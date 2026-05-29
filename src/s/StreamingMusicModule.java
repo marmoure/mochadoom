@@ -13,15 +13,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Music module for streaming (WebSocket) mode.
  *
  * Opens Java's built-in Gervill soft synthesizer in pull / stream mode so its
- * PCM output can be captured and forwarded to {@link Engine#updateMusic}.  The
- * synthesizer is accessed via reflection because
- * {@code com.sun.media.sound.SoftSynthesizer} lives in an unexported JDK
- * package; the JVM must be started with
- * {@code --add-opens java.desktop/com.sun.media.sound=ALL-UNNAMED} for the
- * reflection call to succeed.
+ * PCM output can be captured and forwarded to {@link Engine#updateMusic}.
  *
- * Falls back to {@link DavidMusicModule} (hardware MIDI) if the soft synth
- * cannot be opened in stream mode.
+ * Requires JVM flag:
+ *   --add-opens java.desktop/com.sun.media.sound=ALL-UNNAMED
+ *
+ * If that flag is absent (Java 17+ strict encapsulation), the module silences
+ * music entirely rather than falling back to hardware MIDI, so the user never
+ * hears music leaking from the server terminal.
  */
 public class StreamingMusicModule implements IMusic {
 
@@ -36,8 +35,8 @@ public class StreamingMusicModule implements IMusic {
     private final AtomicBoolean running = new AtomicBoolean();
     private boolean songLoaded;
 
-    // Non-null when PCM streaming couldn't be set up — all calls delegate here.
-    private DavidMusicModule fallback;
+    // True when PCM streaming is up; false means music is silenced.
+    private boolean streaming;
 
     @Override
     public void InitMusic() {
@@ -50,16 +49,17 @@ public class StreamingMusicModule implements IMusic {
             sequencer.getTransmitter().setReceiver(synth.getReceiver());
 
             running.set(true);
+            streaming = true;
             Thread t = new Thread(this::readLoop, "music-pcm");
             t.setDaemon(true);
             t.start();
 
             System.err.println("I_InitMusic: streaming mode (PCM → WebSocket)");
         } catch (Exception e) {
-            System.err.println("I_InitMusic: PCM streaming unavailable (" + e.getMessage()
-                + "), using hardware MIDI");
-            fallback = new DavidMusicModule();
-            fallback.InitMusic();
+            streaming = false;
+            System.err.println("I_InitMusic: PCM streaming unavailable — " + e);
+            System.err.println("  Music is silenced. For browser music add JVM flag:");
+            System.err.println("  --add-opens java.desktop/com.sun.media.sound=ALL-UNNAMED");
         }
     }
 
@@ -90,16 +90,14 @@ public class StreamingMusicModule implements IMusic {
 
     @Override
     public void ShutdownMusic() {
-        if (fallback != null) { fallback.ShutdownMusic(); return; }
         running.set(false);
         if (sequencer != null && sequencer.isOpen()) { sequencer.stop(); sequencer.close(); }
-        if (synth    != null && synth.isOpen())     synth.close();
+        if (synth    != null && synth.isOpen())      synth.close();
     }
 
     @Override
     public void SetMusicVolume(int volume) {
-        if (fallback != null) { fallback.SetMusicVolume(volume); return; }
-        if (synth == null) return;
+        if (!streaming || synth == null) return;
         try {
             Receiver r = synth.getReceiver();
             for (int ch = 0; ch < 16; ch++) {
@@ -113,20 +111,17 @@ public class StreamingMusicModule implements IMusic {
 
     @Override
     public void PauseSong(int handle) {
-        if (fallback != null) { fallback.PauseSong(handle); return; }
-        if (sequencer != null && sequencer.isRunning()) sequencer.stop();
+        if (streaming && sequencer != null && sequencer.isRunning()) sequencer.stop();
     }
 
     @Override
     public void ResumeSong(int handle) {
-        if (fallback != null) { fallback.ResumeSong(handle); return; }
-        if (sequencer != null && songLoaded) sequencer.start();
+        if (streaming && sequencer != null && songLoaded) sequencer.start();
     }
 
     @Override
     public int RegisterSong(byte[] data) {
-        if (fallback != null) return fallback.RegisterSong(data);
-        if (sequencer == null) return -1;
+        if (!streaming || sequencer == null) return -1;
         try {
             Sequence seq;
             try {
@@ -146,21 +141,18 @@ public class StreamingMusicModule implements IMusic {
 
     @Override
     public void PlaySong(int handle, boolean looping) {
-        if (fallback != null) { fallback.PlaySong(handle, looping); return; }
-        if (sequencer == null || !songLoaded) return;
+        if (!streaming || sequencer == null || !songLoaded) return;
         sequencer.setLoopCount(looping ? Sequencer.LOOP_CONTINUOUSLY : 0);
         sequencer.start();
     }
 
     @Override
     public void StopSong(int handle) {
-        if (fallback != null) { fallback.StopSong(handle); return; }
-        if (sequencer != null) sequencer.stop();
+        if (streaming && sequencer != null) sequencer.stop();
     }
 
     @Override
     public void UnRegisterSong(int handle) {
-        if (fallback != null) { fallback.UnRegisterSong(handle); return; }
         songLoaded = false;
     }
 
