@@ -317,6 +317,10 @@ const statSize     = document.getElementById('stat-size');
 const fpsValue     = document.getElementById('fps-value');
 const reconnectBtn = document.getElementById('reconnect-btn');
 
+// ── Message type bytes (must match Java GameWebSocketServer) ────────────
+const TYPE_VIDEO = 0x01;
+const TYPE_AUDIO = 0x02;
+
 // ── State ───────────────────────────────────────────────────────────────
 let frameCount  = 0;
 let lastFpsTime = performance.now();
@@ -332,8 +336,10 @@ function updateFps() {
   }
 }
 
-// ── Render a JPEG blob onto the canvas ──────────────────────────────────
-async function renderJpeg(blob) {
+// ── Render a JPEG onto the canvas ────────────────────────────────────────
+// msg: ArrayBuffer — byte 0 is the type byte (0x01), rest is JPEG
+async function renderVideo(msg) {
+  const blob   = new Blob([new Uint8Array(msg, 1)], { type: 'image/jpeg' });
   const bitmap = await createImageBitmap(blob);
   const { width: w, height: h } = bitmap;
   if (canvas.width !== w || canvas.height !== h) {
@@ -363,6 +369,66 @@ function formatBytes(b) {
   return b < 1024 ? b + 'B' : (b / 1024).toFixed(1) + 'KB';
 }
 
+// ── Web Audio API ────────────────────────────────────────────────────────
+// PCM format from Java: signed 16-bit big-endian stereo at 22050 Hz.
+const DOOM_SAMPLE_RATE = 22050;
+const AUDIO_LOOKAHEAD  = 0.15;  // seconds to buffer ahead (prevents gaps)
+
+let audioCtx      = null;
+let nextAudioTime = 0;
+
+function ensureAudioCtx() {
+  if (!audioCtx) {
+    audioCtx = new AudioContext({ sampleRate: DOOM_SAMPLE_RATE });
+    nextAudioTime = audioCtx.currentTime + AUDIO_LOOKAHEAD;
+  }
+}
+
+function resumeAudioCtx() {
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+// msg: ArrayBuffer — byte 0 is the type byte (0x02), rest is raw PCM
+function playAudio(msg) {
+  ensureAudioCtx();
+
+  // Read PCM directly from the ArrayBuffer starting at byte 1 (skip type byte).
+  // Format: stereo 16-bit big-endian → 4 bytes per sample frame.
+  const pcmBytes   = msg.byteLength - 1;
+  const sampleCount = Math.floor(pcmBytes / 4);
+  if (sampleCount === 0) return;
+
+  const view   = new DataView(msg, 1);
+  const buffer = audioCtx.createBuffer(2, sampleCount, DOOM_SAMPLE_RATE);
+  const left   = buffer.getChannelData(0);
+  const right  = buffer.getChannelData(1);
+
+  for (let i = 0; i < sampleCount; i++) {
+    left[i]  = view.getInt16(i * 4,     false) / 32768; // false = big-endian
+    right[i] = view.getInt16(i * 4 + 2, false) / 32768;
+  }
+
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(audioCtx.destination);
+
+  // Keep the playhead a fixed lookahead ahead of real time.
+  // If we've fallen behind (e.g. tab was hidden), resync.
+  const now = audioCtx.currentTime;
+  if (nextAudioTime < now + 0.01) nextAudioTime = now + AUDIO_LOOKAHEAD;
+  source.start(nextAudioTime);
+  nextAudioTime += buffer.duration;
+}
+
+// Browsers require a user gesture before AudioContext can play.
+// Unlock on the first keydown or click so sound starts with the game.
+function unlockAudio() {
+  ensureAudioCtx();
+  resumeAudioCtx();
+}
+window.addEventListener('keydown',   unlockAudio, { once: true });
+window.addEventListener('pointerdown', unlockAudio, { once: true });
+
 // ── WebSocket connection ─────────────────────────────────────────────────
 let ws = null;
 let reconnectTimer = null;
@@ -377,7 +443,7 @@ function connect() {
   if (ws) { ws.onclose = null; ws.close(); }
   clearTimeout(reconnectTimer);
   ws = new WebSocket(`ws://${location.host}`);
-  ws.binaryType = 'blob';
+  ws.binaryType = 'arraybuffer'; // need raw bytes to read the type prefix
   setStatus('', 'CONNECTING…');
   reconnectBtn.style.display = 'none';
 
@@ -386,8 +452,14 @@ function connect() {
   });
 
   ws.addEventListener('message', async (evt) => {
-    if (firstFrame) { firstFrame = false; waiting.classList.add('hidden'); }
-    await renderJpeg(evt.data);
+    if (!(evt.data instanceof ArrayBuffer) || evt.data.byteLength < 1) return;
+    const type = new Uint8Array(evt.data, 0, 1)[0];
+    if (type === TYPE_VIDEO) {
+      if (firstFrame) { firstFrame = false; waiting.classList.add('hidden'); }
+      await renderVideo(evt.data);
+    } else if (type === TYPE_AUDIO) {
+      playAudio(evt.data);
+    }
   });
 
   ws.addEventListener('close', () => {

@@ -30,7 +30,7 @@ const GAME_WS_PORT = process.env.GAME_WS_PORT || 3001;
 const SPAWN_GAME = process.argv.includes('--spawn');
 const GAME_DIR = path.resolve(__dirname, '..');
 const GAME_CMD = 'java';
-const GAME_ARGS = ['-jar', 'target/mochadoom-1.0.0-SNAPSHOT.jar', '-websocket', String(GAME_WS_PORT), '-nosound', '-fps', '60'];
+const GAME_ARGS = ['-jar', 'target/mochadoom-1.0.0-SNAPSHOT.jar', '-websocket', String(GAME_WS_PORT), '-fps', '60'];
 
 // ---------------------------------------------------------------------------
 // HTTP server — serves index.html + assets
@@ -67,15 +67,16 @@ const httpServer = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server: httpServer });
 
 let clientCount = 0;
-let lastJpegFrame = null;
+let lastVideoFrame = null; // most recent 0x01-prefixed video frame, for new-client catch-up
 let gameWs = null;
 
 wss.on('connection', (ws) => {
   clientCount++;
   console.log(`[ws] client connected  (total: ${clientCount})`);
 
-  // Send the last known frame immediately so the client isn't blank
-  if (lastJpegFrame) ws.send(lastJpegFrame, { binary: true });
+  // Send the last known video frame immediately so the client isn't blank.
+  // Audio is not cached — new clients pick up from the next chunk naturally.
+  if (lastVideoFrame) ws.send(lastVideoFrame, { binary: true });
 
   ws.on('message', (data) => {
     // Forward browser key events to the Java game
@@ -108,20 +109,30 @@ function broadcast(buf) {
 // ---------------------------------------------------------------------------
 let frameCount = 0;
 
+// Binary message type bytes (must match Java GameWebSocketServer)
+const TYPE_VIDEO = 0x01;
+const TYPE_AUDIO = 0x02;
+
 function connectToGame() {
   const url = `ws://localhost:${GAME_WS_PORT}`;
   console.log(`[game-ws] connecting to ${url}`);
-  gameWs = new WebSocket(url);
+  gameWs = new WebSocket(url, { perMessageDeflate: false });
 
   gameWs.on('open', () => {
     console.log('[game-ws] connected to Java game');
   });
 
   gameWs.on('message', (data, isBinary) => {
-    if (!isBinary) return; // only relay binary JPEG frames
-    frameCount++;
-    if (frameCount % 60 === 0) console.log(`[game-ws] relayed ${frameCount} frames`);
-    lastJpegFrame = data;
+    if (!isBinary) return;
+    // Cache only video frames so new clients get a picture immediately.
+    // Audio frames are not cached — clients that connect mid-stream pick up
+    // from the next audio chunk naturally.
+    const type = data[0];
+    if (type === TYPE_VIDEO) {
+      frameCount++;
+      if (frameCount % 300 === 0) console.log(`[game-ws] relayed ${frameCount} frames`);
+      lastVideoFrame = data;
+    }
     broadcast(data);
   });
 
@@ -167,7 +178,7 @@ httpServer.listen(PORT, () => {
     console.log('Game process will start now. Open the URL above in your browser.\n');
   } else {
     console.log(`Waiting for Java game on ws://localhost:${GAME_WS_PORT}`);
-    console.log(`  java -jar src/mochadoom.jar -websocket ${GAME_WS_PORT} -nosound -fps 60\n`);
+    console.log(`  java -jar target/mochadoom-1.0.0-SNAPSHOT.jar -websocket ${GAME_WS_PORT}\n`);
     console.log('Or let this server spawn the game automatically:');
     console.log(`  node server/server.js --spawn\n`);
   }
