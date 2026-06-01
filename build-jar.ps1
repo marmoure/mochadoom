@@ -19,3 +19,6 @@ Move-Item -Path mochadoom.jar -Destination ..\src\mochadoom.jar -Force
 Set-Location ..
 
 Write-Host "Build successful! src\mochadoom.jar created."
+Write-Host ""
+Write-Host "Run (WebSocket mode with browser music):"
+Write-Host "  java --add-opens java.desktop/com.sun.media.sound=ALL-UNNAMED -jar src\mochadoom.jar -websocket 8080"
