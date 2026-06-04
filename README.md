@@ -4,6 +4,8 @@ A pure-Java Doom engine that can be embedded as a library or run standalone.
 Supports three output modes: a local AWT window, WebSocket streaming to a
 browser, and a raw binary stdout pipe for custom consumers.
 
+This modded version is used in [Xdoom](https://github.com/evolvedbinary/Xdoom)
+
 ---
 
 ## Modes at a glance
